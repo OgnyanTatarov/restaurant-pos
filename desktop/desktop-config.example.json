@@ -1,9 +1,14 @@
 {
   "port": 47831,
-  "printers": { "kitchen": "", "bar": "" },
+  "printers": {
+    "named": [],
+    "kitchen": "",
+    "bar": "",
+    "bill": ""
+  },
   "supabase": {
-    "url": "https://YOUR_PROJECT.supabase.co",
+    "url": "https://nebpmyoglgmaztexbchl.supabase.co",
     "serviceRoleKey": "YOUR_SERVER_ONLY_SERVICE_ROLE_KEY",
-    "restaurantId": "YOUR_RESTAURANT_UUID"
+    "restaurantId": "2fa67e09-df28-4be7-a90d-03dab6436936"
   }
 }

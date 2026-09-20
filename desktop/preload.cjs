@@ -14,5 +14,6 @@ contextBridge.exposeInMainWorld(
     saveUpdateUrl: (url) => ipcRenderer.invoke("pos:save-update-url", url),
     checkUpdate: () => ipcRenderer.invoke("pos:check-update"),
     installUpdate: () => ipcRenderer.invoke("pos:install-update"),
+    quitApp: (pin) => ipcRenderer.invoke("pos:quit-app", pin),
   }),
 );

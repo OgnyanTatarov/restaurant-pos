@@ -1739,6 +1739,7 @@ function App() {
                       info={info}
                       setInfo={setInfo}
                       onError={setError}
+                      hasPin={!!s.settings.managerPinHash}
                     />
                     <section className="panel padded">
                       <h2>Backup & audit</h2>
@@ -3285,6 +3286,54 @@ function updateLabel(update?: {
       return "The app checks for updates when it starts and every few hours.";
   }
 }
+function ClosePos({
+  hasPin,
+  onError,
+}: {
+  hasPin: boolean;
+  onError: (s: string) => void;
+}) {
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <form
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        try {
+          await ipc("quitApp", pin);
+        } catch (err) {
+          onError((err as Error).message);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {hasPin ? (
+        <label>
+          Manager PIN
+          <input
+            type="password"
+            inputMode="numeric"
+            autoComplete="off"
+            required
+            minLength={4}
+            maxLength={12}
+            value={pin}
+            onChange={(e) => setPin(e.target.value)}
+          />
+        </label>
+      ) : (
+        <p className="danger-text">
+          Set a manager PIN above so only a manager can close this computer.
+        </p>
+      )}
+      <button className="danger-text" disabled={busy || (hasPin && pin.length < 4)}>
+        Close application
+      </button>
+    </form>
+  );
+}
 function UpdateSettings({
   info,
   setInfo,
@@ -3357,10 +3406,12 @@ function DesktopSettings({
   info,
   setInfo,
   onError,
+  hasPin,
 }: {
   info: any;
   setInfo: (v: any) => void;
   onError: (s: string) => void;
+  hasPin: boolean;
 }) {
   const [devices, setDevices] = useState<any[]>([]);
   const [named, setNamed] = useState<NamedPrinter[]>([]);
@@ -3608,6 +3659,14 @@ function DesktopSettings({
         </p>
         <small>Data folder</small>
         <code className="address">{info?.dataPath}</code>
+      </section>
+      <section className="panel padded">
+        <h2>Close the POS</h2>
+        <p>
+          The installed app stays full screen. Staff cannot minimize or close
+          it. A manager PIN is required to leave.
+        </p>
+        <ClosePos hasPin={hasPin} onError={onError} />
       </section>
     </>
   );

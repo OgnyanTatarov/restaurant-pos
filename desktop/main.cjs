@@ -4,10 +4,12 @@ const {
   ipcMain,
   dialog,
   powerSaveBlocker,
+  globalShortcut,
 } = require("electron");
 const path = require("node:path"),
   fs = require("node:fs"),
   os = require("node:os");
+const { assertManagerPin } = require("./kiosk.cjs");
 let win,
   engine,
   hub,
@@ -15,7 +17,8 @@ let win,
   printTimer,
   printing = false,
   cloudStatus = {},
-  hubError = "";
+  hubError = "",
+  allowQuit = !app.isPackaged;
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -94,6 +97,7 @@ if (!app.requestSingleInstanceLock()) {
         hubError = e.message;
       }
       stopCloud = startCloud(engine, config.supabase, (s) => (cloudStatus = s));
+      const kiosk = app.isPackaged;
       win = new BrowserWindow({
         width: 1440,
         height: 940,
@@ -101,6 +105,13 @@ if (!app.requestSingleInstanceLock()) {
         minHeight: 650,
         title: "Restaurant POS",
         backgroundColor: "#f3f5f4",
+        fullscreen: kiosk,
+        kiosk,
+        frame: !kiosk,
+        closable: !kiosk,
+        minimizable: !kiosk,
+        maximizable: !kiosk,
+        autoHideMenuBar: true,
         webPreferences: {
           preload: path.join(__dirname, "preload.cjs"),
           contextIsolation: true,
@@ -109,8 +120,41 @@ if (!app.requestSingleInstanceLock()) {
         },
       });
       win.setMenuBarVisibility(false);
+      if (kiosk) {
+        win.setAlwaysOnTop(true, "screen-saver");
+        win.webContents.on("before-input-event", (event, input) => {
+          if (
+            input.key === "Escape" ||
+            input.key === "F11" ||
+            (input.alt && input.key === "F4")
+          )
+            event.preventDefault();
+        });
+        win.on("minimize", (event) => {
+          event.preventDefault();
+          win.restore();
+          win.setKiosk(true);
+          win.focus();
+        });
+        win.on("leave-full-screen", () => {
+          if (!allowQuit) win.setKiosk(true);
+        });
+        globalShortcut.register("Alt+F4", () => {});
+        globalShortcut.register("Escape", () => {});
+      }
+      win.on("close", (event) => {
+        if (!allowQuit) event.preventDefault();
+      });
       win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       win.webContents.on("will-navigate", (e) => e.preventDefault());
+      const unlockQuit = () => {
+        allowQuit = true;
+        globalShortcut.unregisterAll();
+        if (win && !win.isDestroyed()) {
+          win.setAlwaysOnTop(false);
+          win.setKiosk(false);
+        }
+      };
       const handle = (name, fn) =>
         ipcMain.handle(name, async (event, ...args) => {
           if (event.sender !== win.webContents) throw Error("Access denied");
@@ -186,6 +230,8 @@ if (!app.requestSingleInstanceLock()) {
         dataPath: data,
         cloud: cloudStatus,
         hubError,
+        kiosk,
+        hasPin: !!engine.state.settings.managerPinHash,
         version: app.getVersion(),
         update: updater.status(),
         updateUrl: config.updateUrl || bakedFeed.url || "",
@@ -210,7 +256,15 @@ if (!app.requestSingleInstanceLock()) {
         return { updateUrl: config.updateUrl };
       });
       handle("pos:check-update", () => updater.check());
-      handle("pos:install-update", () => updater.install());
+      handle("pos:install-update", () => {
+        unlockQuit();
+        updater.install();
+      });
+      handle("pos:quit-app", (pin) => {
+        assertManagerPin(engine.state.settings.managerPinHash, pin);
+        unlockQuit();
+        app.quit();
+      });
       handle("pos:printers", () => win.webContents.getPrintersAsync());
       handle("pos:save-printers", (p) => {
         config.printers = normalizePrinters(p);
@@ -284,8 +338,15 @@ if (!app.requestSingleInstanceLock()) {
       );
       app.quit();
     });
-  app.on("window-all-closed", () => app.quit());
-  app.on("before-quit", () => {
+  app.on("window-all-closed", () => {
+    if (allowQuit) app.quit();
+  });
+  app.on("before-quit", (event) => {
+    if (!allowQuit) {
+      event.preventDefault();
+      return;
+    }
+    globalShortcut.unregisterAll();
     clearInterval(printTimer);
     stopCloud?.();
     hub?.close();

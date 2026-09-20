@@ -32,7 +32,7 @@ You can also build on a Windows PC with `npm run dist:win:publish` if
 `GH_TOKEN` is set. Leave the update address in Settings blank unless a
 computer should use a different feed.
 
-Use a trusted manager Windows account. The desktop session has manager privileges; there is no additional manager PIN on the desktop. Give waiters paired mobile devices with the waiter role.
+Use a trusted manager Windows account. The installed app opens full screen and cannot be minimized or closed from the window controls. Set a manager PIN in Settings. Only that PIN can close the application from Settings → Close the POS. Give waiters paired mobile devices with the waiter role. Windows Task Manager can still force-quit the app; use Windows assigned access if you need the computer locked to this app only.
 
 ## Printers
 

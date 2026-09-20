@@ -2,9 +2,16 @@
 
 Nothing in the source is connected to a real Supabase account. Local desktop and local Wi-Fi use work without it.
 
+The POS cloud project is **Angel Steak house Pos**
+(`nebpmyoglgmaztexbchl`).
+
+- Project URL: `https://nebpmyoglgmaztexbchl.supabase.co`
+- Restaurant UUID: `2fa67e09-df28-4be7-a90d-03dab6436936`
+
 ## 1. Create the schema
 
-Create a Supabase project, open SQL Editor and execute `supabase/001_restaurant.sql` once. It creates:
+The schema is already applied on that project. To recreate it on a new
+project, open SQL Editor and execute `supabase/001_restaurant.sql` once. It creates:
 
 - `pos_restaurants`: a restaurant and its authoritative hub identity.
 - `pos_members`: users and waiter/manager permissions.
@@ -20,12 +27,15 @@ The migration enables row-level security. Authenticated mobile clients can read 
 Create each staff user in Supabase Authentication. Use email/password accounts. Record their user IDs. In SQL Editor, run this using your actual names and UUIDs:
 
 ```sql
-insert into public.pos_restaurants(name)
-values ('My restaurant') returning id;
-
--- Replace both UUID placeholders before executing.
+-- Restaurant already exists: 2fa67e09-df28-4be7-a90d-03dab6436936
+-- Replace AUTH_USER_UUID with the staff user's Auth UUID.
 insert into public.pos_members(restaurant_id,user_id,role,display_name)
-values ('RESTAURANT_UUID','AUTH_USER_UUID','manager','Manager');
+values (
+  '2fa67e09-df28-4be7-a90d-03dab6436936',
+  'AUTH_USER_UUID',
+  'manager',
+  'Manager'
+);
 
 -- Repeat with role = 'waiter' for waiter accounts.
 ```
@@ -40,13 +50,15 @@ Open desktop **Settings → Supabase & local data** to find its data folder. Clo
 {
   "port": 47831,
   "printers": {
-    "kitchen": "YOUR WINDOWS PRINTER NAME",
-    "bar": "YOUR WINDOWS PRINTER NAME"
+    "named": [],
+    "kitchen": "",
+    "bar": "",
+    "bill": ""
   },
   "supabase": {
-    "url": "https://YOUR_PROJECT.supabase.co",
+    "url": "https://nebpmyoglgmaztexbchl.supabase.co",
     "serviceRoleKey": "YOUR_SERVER_ONLY_SERVICE_ROLE_KEY",
-    "restaurantId": "YOUR_RESTAURANT_UUID"
+    "restaurantId": "2fa67e09-df28-4be7-a90d-03dab6436936"
   }
 }
 ```
@@ -59,9 +71,11 @@ Restart the app. Settings should show cloud status. The first successful connect
 
 In the phone app choose **Supabase (internet)**. Enter:
 
-- Project URL.
-- Public publishable/anon key, never the service role key.
-- Restaurant UUID.
+- Project URL: `https://nebpmyoglgmaztexbchl.supabase.co`
+- Public anon key: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5lYnBteW9nbGdtYXp0ZXhiY2hsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTM1OTcsImV4cCI6MjEwNTM4OTU5N30.SZ0AMht0MDPhNjrbx-ZH8yt8jTC4_ck1LAzA0TL4xn4`
+- Or the newer publishable key: `sb_publishable_-81gCPsl70asFXGka57v0w_WYKV8hJ1`
+- Never the service role key.
+- Restaurant UUID: `2fa67e09-df28-4be7-a90d-03dab6436936`
 - The staff user's email and password.
 
 Access/refresh tokens stay in memory; after restarting the mobile app, sign in again using Settings. Public project configuration is retained. The desktop processes submitted commands and uploads the updated state. Two-second polling is used; Supabase Realtime configuration is not required.

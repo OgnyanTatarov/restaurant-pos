@@ -9,6 +9,7 @@ import { ticketHtml, billHtml, ticketSizes } from "../desktop/ticket.mjs";
 import { normalizePrinters, deviceForJob } from "../desktop/printers.mjs";
 import { createHub } from "../desktop/hub.mjs";
 import { parseUpdateFeed } from "../desktop/updater.cjs";
+import { assertManagerPin, pinHash } from "../desktop/kiosk.cjs";
 import { writeFileSync } from "node:fs";
 const command = (type, payload = {}) => ({ id: randomUUID(), type, payload });
 function setup() {
@@ -435,6 +436,11 @@ test("pairing uses revocable hashed tokens and enforces roles over LAN", async (
     await new Promise((r) => hub.close(r));
     e.close();
   }
+});
+test("closing the desktop app requires the manager PIN once it is set", () => {
+  assertManagerPin("", "");
+  assert.throws(() => assertManagerPin(pinHash("2468"), "0000"), /Incorrect/);
+  assert.doesNotThrow(() => assertManagerPin(pinHash("2468"), "2468"));
 });
 test("update feeds accept a folder URL or a GitHub repo", () => {
   assert.deepEqual(parseUpdateFeed("http://192.168.1.8:47831/updates"), {
