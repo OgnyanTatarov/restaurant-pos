@@ -10,6 +10,7 @@ import { normalizePrinters, deviceForJob } from "../desktop/printers.mjs";
 import { createHub } from "../desktop/hub.mjs";
 import { parseUpdateFeed } from "../desktop/updater.cjs";
 import { assertManagerPin, pinHash } from "../desktop/kiosk.cjs";
+import { enrichCommand } from "../desktop/cloud.mjs";
 import { writeFileSync } from "node:fs";
 const command = (type, payload = {}) => ({ id: randomUUID(), type, payload });
 function setup() {
@@ -436,6 +437,45 @@ test("pairing uses revocable hashed tokens and enforces roles over LAN", async (
     await new Promise((r) => hub.close(r));
     e.close();
   }
+});
+test("a second computer adopts the snapshot and applies the same events without reprinting", () => {
+  const a = new Engine(),
+    b = new Engine();
+  a.execute(command("demo.load"));
+  b.adoptSnapshot(a.snapshot());
+  assert.equal(b.state.tables[0].id, a.state.tables[0].id);
+  assert.notEqual(b.state.hubId, a.state.hubId);
+  const actor = { id: a.state.hubId, name: "Station A", role: "manager" };
+  const open = enrichCommand(
+    command("order.open", { tableId: a.state.tables[0].id }),
+  );
+  a.execute(open, actor, { print: true });
+  b.execute(open, actor, { print: false });
+  assert.equal(a.state.orders[0].id, b.state.orders[0].id);
+  const item = a.state.menu.find(
+    (m) => m.station === "kitchen" && !m.deleted && !(m.cookOptions || []).some((c) => !c.deleted),
+  );
+  const addItem = enrichCommand(
+    command("order.add", {
+      orderId: open.payload.orderId,
+      version: 0,
+      menuId: item.id,
+      qty: 1,
+    }),
+  );
+  a.execute(addItem, actor);
+  b.execute(addItem, actor, { print: false });
+  const send = enrichCommand(
+    command("order.send", { orderId: open.payload.orderId, version: 1 }),
+  );
+  a.execute(send, actor, { print: true });
+  b.execute(send, actor, { print: false });
+  assert.equal(a.state.jobs.filter((j) => j.status === "queued").length, 1);
+  assert.equal(b.state.jobs.filter((j) => j.status === "queued").length, 0);
+  assert.equal(b.state.jobs[0].status, "remote");
+  assert.equal(a.state.jobs[0].id, b.state.jobs[0].id);
+  a.close();
+  b.close();
 });
 test("closing the desktop app requires the manager PIN once it is set", () => {
   assertManagerPin("", "");

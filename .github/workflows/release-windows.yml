@@ -16,6 +16,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Bake restaurant Supabase key
+        env:
+          POS_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.POS_SUPABASE_SERVICE_ROLE_KEY }}
+        run: node -e "if(!process.env.POS_SUPABASE_SERVICE_ROLE_KEY) throw new Error('Add the POS_SUPABASE_SERVICE_ROLE_KEY repository secret'); require('fs').writeFileSync('desktop/supabase.local.json', JSON.stringify({serviceRoleKey:process.env.POS_SUPABASE_SERVICE_ROLE_KEY}))"
       - run: npm run dist:win:publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

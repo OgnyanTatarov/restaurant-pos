@@ -26,6 +26,17 @@ const integer = (v, name, min = 0, max = 10000000) => {
   return v;
 };
 const hash = (v) => createHash("sha256").update(v).digest("hex");
+const jobKey = (commandId, station, kind) => {
+  const h = hash(`${commandId}:${station}:${kind}`);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+};
+const stamp = (v) => {
+  if (v == null || v === "") return new Date().toISOString();
+  if (typeof v !== "string") fail("Invalid time");
+  const t = Date.parse(v);
+  if (Number.isNaN(t)) fail("Invalid time");
+  return new Date(t).toISOString();
+};
 export const unitAmount = (i) => {
   const extras = (i.choices?.extras || []).reduce(
     (n, extra) => n + (extra.price || 0),
@@ -223,8 +234,10 @@ export class Engine {
   constructor(path = ":memory:") {
     this.db = new DatabaseSync(path);
     this.db.exec(
-      "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS state(id INTEGER PRIMARY KEY CHECK(id=1),json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,actor TEXT NOT NULL,result TEXT NOT NULL); CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY,name TEXT NOT NULL,role TEXT NOT NULL,hash TEXT NOT NULL,revoked INTEGER NOT NULL DEFAULT 0);",
+      "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS state(id INTEGER PRIMARY KEY CHECK(id=1),json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,actor TEXT NOT NULL,result TEXT NOT NULL); CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY,name TEXT NOT NULL,role TEXT NOT NULL,hash TEXT NOT NULL,revoked INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS sync(id INTEGER PRIMARY KEY CHECK(id=1), event_seq INTEGER NOT NULL);",
     );
+    if (!this.db.prepare("SELECT 1 FROM sync").get())
+      this.db.prepare("INSERT INTO sync VALUES(1,0)").run();
     if (!this.db.prepare("SELECT 1 FROM state").get())
       this.db
         .prepare("INSERT INTO state VALUES(1,?)")
@@ -312,6 +325,32 @@ export class Engine {
   snapshot() {
     return structuredClone(this.state);
   }
+  eventSeq() {
+    return this.db.prepare("SELECT event_seq FROM sync WHERE id=1").get()
+      .event_seq;
+  }
+  setEventSeq(n) {
+    this.db
+      .prepare("UPDATE sync SET event_seq=? WHERE id=1")
+      .run(integer(n, "event", 0));
+  }
+  resultOf(id) {
+    const row = this.db.prepare("SELECT result FROM commands WHERE id=?").get(id);
+    return row ? JSON.parse(row.result) : null;
+  }
+  adoptSnapshot(raw) {
+    if (!raw || typeof raw !== "object") fail("Invalid snapshot");
+    const hubId = this.state.hubId;
+    const next = structuredClone(raw);
+    next.hubId = hubId;
+    if (!Array.isArray(next.jobs)) next.jobs = [];
+    for (const job of next.jobs) {
+      if (job.status === "queued" || job.status === "printing")
+        job.status = "remote";
+    }
+    this.state = next;
+    this.persist();
+  }
   devices() {
     return this.db.prepare("SELECT id,name,role,revoked FROM devices").all();
   }
@@ -342,6 +381,7 @@ export class Engine {
   execute(
     command,
     actor = { id: "desktop", name: "Desktop manager", role: "manager" },
+    options = {},
   ) {
     if (!command || typeof command !== "object") fail("Invalid command");
     const { id, type, payload: p = {} } = command;
@@ -374,11 +414,12 @@ export class Engine {
     )
       fail("Manager permission required", 403);
     const before = this.snapshot();
+    const printJobs = options.print !== false;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const s = this.state;
       let result = {};
-      const now = new Date().toISOString();
+      const now = stamp(p.at);
       const order = () => {
         const o = s.orders.find((o) => o.id === p.orderId);
         if (!o) fail("Order not found", 404);
@@ -408,13 +449,13 @@ export class Engine {
           const lines = items.filter((i) => i.station === station);
           if (lines.length)
             s.jobs.push({
-              id: randomUUID(),
+              id: jobKey(id, station, kind),
               orderId: o.id,
               tableName: o.tableName,
               station,
               kind,
               items: structuredClone(lines),
-              status: "queued",
+              status: printJobs ? "queued" : "remote",
               createdAt: now,
               attempts: 0,
               error: "",
@@ -450,7 +491,7 @@ export class Engine {
         if (!amount) fail("Share total must be greater than zero");
         o.payments = o.payments || [];
         o.payments.push({
-          id: randomUUID(),
+          id: p.paymentId ? text(p.paymentId, "payment", 80) : randomUUID(),
           at: now,
           payment,
           amount,
@@ -474,6 +515,23 @@ export class Engine {
             s.categories.length
           )
             fail("Example data is available only in an empty restaurant");
+          if (Array.isArray(p.tables) && Array.isArray(p.categories) && Array.isArray(p.menu)) {
+            s.tables = structuredClone(p.tables);
+            s.categories = structuredClone(p.categories);
+            s.menu = structuredClone(p.menu);
+            if (p.settings && typeof p.settings === "object") {
+              s.settings = {
+                ...s.settings,
+                name: text(p.settings.name || s.settings.name, "restaurant name"),
+                currency: text(
+                  p.settings.currency || s.settings.currency,
+                  "currency",
+                  3,
+                ).toUpperCase(),
+              };
+            }
+            break;
+          }
           const angel = buildAngelMenu();
           s.tables = Array.from({ length: 8 }, (_, i) => ({
             id: randomUUID(),
@@ -494,6 +552,16 @@ export class Engine {
         case "menu.replace": {
           if (s.orders.some((o) => o.status === "open"))
             fail("Close open orders before replacing the menu");
+          if (Array.isArray(p.categories) && Array.isArray(p.menu)) {
+            s.categories = structuredClone(p.categories);
+            s.menu = structuredClone(p.menu);
+            if (p.settings && typeof p.settings === "object" && p.settings.name)
+              s.settings = {
+                ...s.settings,
+                name: text(p.settings.name, "restaurant name"),
+              };
+            break;
+          }
           const angel = buildAngelMenu();
           s.categories = angel.categories;
           s.menu = angel.menu;
@@ -516,8 +584,12 @@ export class Engine {
               "Currency cannot change after orders exist. Keep historical amounts in their original currency.",
             );
           let managerPinHash = s.settings.managerPinHash || "";
-          const nextPin = parsePin(p.pin ?? q.pin);
-          if (nextPin) managerPinHash = hash(nextPin);
+          if (typeof p.pinHash === "string" && /^[a-f0-9]{64}$/.test(p.pinHash))
+            managerPinHash = p.pinHash;
+          else {
+            const nextPin = parsePin(p.pin ?? q.pin);
+            if (nextPin) managerPinHash = hash(nextPin);
+          }
           s.settings = {
             name: text(q.name, "restaurant name"),
             currency: text(q.currency, "currency", 3).toUpperCase(),
@@ -533,7 +605,6 @@ export class Engine {
         }
         case "table.save": {
           const existing = s.tables.find((t) => t.id === p.id && !t.deleted);
-          if (p.id && !existing) fail("Table not found");
           const data = {
             name: text(p.name, "table name"),
             room: text(p.room, "room"),
@@ -547,7 +618,12 @@ export class Engine {
                 o.tableName = data.name;
                 o.version++;
               });
-          } else s.tables.push({ id: randomUUID(), ...data, deleted: false });
+          } else
+            s.tables.push({
+              id: p.id ? text(p.id, "table", 80) : randomUUID(),
+              ...data,
+              deleted: false,
+            });
           break;
         }
         case "table.delete": {
@@ -559,7 +635,8 @@ export class Engine {
         }
         case "category.save": {
           const existing = s.categories.find((c) => c.id === p.id && !c.deleted);
-          if (p.id && !existing) fail("Category not found");
+          if (p.id && !existing && s.categories.some((c) => c.id === p.id))
+            fail("Category not found");
           const name = text(p.name, "category name");
           if (
             s.categories.some(
@@ -587,7 +664,7 @@ export class Engine {
                 });
           } else
             s.categories.push({
-              id: randomUUID(),
+              id: p.id ? text(p.id, "category", 80) : randomUUID(),
               name,
               deleted: false,
               sideMode,
@@ -605,7 +682,8 @@ export class Engine {
         }
         case "menu.save": {
           const existing = s.menu.find((m) => m.id === p.id && !m.deleted);
-          if (p.id && !existing) fail("Menu item not found");
+          if (p.id && !existing && s.menu.some((m) => m.id === p.id))
+            fail("Menu item not found");
           if (!["kitchen", "bar"].includes(p.station))
             fail("Choose kitchen or bar");
           const category = text(p.category, "category");
@@ -647,7 +725,12 @@ export class Engine {
               : existing?.sideMode || "inherit",
           };
           if (existing) Object.assign(existing, data);
-          else s.menu.push({ id: randomUUID(), ...data, deleted: false });
+          else
+            s.menu.push({
+              id: p.id ? text(p.id, "item", 80) : randomUUID(),
+              ...data,
+              deleted: false,
+            });
           break;
         }
         case "menu.delete": {
@@ -661,7 +744,7 @@ export class Engine {
           if (s.orders.some((o) => o.tableId === t.id && o.status === "open"))
             fail("This table already has an open order", 409);
           const o = {
-            id: randomUUID(),
+            id: p.orderId ? text(p.orderId, "order", 80) : randomUUID(),
             tableId: t.id,
             tableName: t.name,
             status: "open",
@@ -729,7 +812,7 @@ export class Engine {
             cook = { id: cook.id, name: cook.name };
           }
           o.items.push({
-            id: randomUUID(),
+            id: p.itemId ? text(p.itemId, "item", 80) : randomUUID(),
             menuId: m.id,
             name: m.name,
             price: m.price,
@@ -838,7 +921,7 @@ export class Engine {
             fail("Paid items stay on this bill");
           const next = {
             ...o,
-            id: randomUUID(),
+            id: p.newOrderId ? text(p.newOrderId, "order", 80) : randomUUID(),
             tableId: t.id,
             tableName: t.name,
             items: structuredClone(items),
@@ -894,13 +977,13 @@ export class Engine {
               ? p.printerId.trim().slice(0, 80)
               : "";
           s.jobs.push({
-            id: randomUUID(),
+            id: p.jobId ? text(p.jobId, "job", 80) : jobKey(id, "bill", "BILL"),
             orderId: o.id,
             tableName: o.tableName,
             station: "bill",
             kind: "BILL",
             items: structuredClone(items),
-            status: "queued",
+            status: printJobs ? "queued" : "remote",
             createdAt: now,
             attempts: 0,
             error: "",
@@ -930,9 +1013,11 @@ export class Engine {
             fail("Job is already queued or printing");
           s.jobs.push({
             ...structuredClone(j),
-            id: randomUUID(),
+            id: p.jobId
+              ? text(p.jobId, "job", 80)
+              : jobKey(id, j.station, `REPRINT ${j.kind.replace(/^REPRINT /, "")}`),
             kind: `REPRINT ${j.kind.replace(/^REPRINT /, "")}`,
-            status: "queued",
+            status: printJobs ? "queued" : "remote",
             createdAt: now,
             attempts: 0,
             error: "",

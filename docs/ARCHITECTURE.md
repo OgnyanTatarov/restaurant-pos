@@ -2,11 +2,11 @@
 
 ## Authority and offline behaviour
 
-The Windows process owns one SQLite database and is the only authoritative writer. All commands pass through `core/engine.mjs` and are committed in a SQLite transaction. Desktop interaction uses a narrow Electron preload IPC API. Local phones call the authenticated hub. Remote phones submit commands to Supabase, which the desktop bridge processes every two seconds.
+Each Windows process keeps a local SQLite copy. When Supabase is configured, every order, menu, and table change is written to a shared `pos_events` log and applied on every computer in the same order. The machine that entered the action prints its kitchen, bar, or bill ticket; the other computer applies the same change without reprinting.
 
-This deliberately avoids trying to merge independently edited order documents across offline devices. The desktop continues taking orders and printing offline. Phones need a connection to the hub or cloud; an isolated phone displays its cached snapshot and cannot independently accept a new order.
+Phones still submit commands and read `pos_snapshots`. Two or more Windows tills can stay in sync this way. If two people edit the same open order at the same moment, the first event wins and the other till asks staff to refresh and try again.
 
-`pos_snapshots` provides mobile cloud readers with the latest aggregate state. The bridge holds a restaurant hub identity in Supabase, preventing a new blank desktop database from replacing an existing restaurant. One hub per restaurant is supported. Running a cloned backup concurrently on a second PC is unsupported.
+Without Supabase, a desktop continues to work from its own SQLite database only. Running two unconfigured copies will not share orders.
 
 ## Durable commands and conflict rules
 

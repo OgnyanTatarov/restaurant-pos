@@ -17,3 +17,4 @@ ios/App/App.xcworkspace/xcuserdata/
 
 .dev-pairing.json
 desktop-config.json
+desktop/supabase.local.json

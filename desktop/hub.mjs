@@ -26,6 +26,7 @@ export function createHub(
     tlsKey,
     printers,
     updatesDir,
+    execute,
   } = {},
 ) {
   const handler = async (req, res) => {
@@ -107,7 +108,10 @@ export function createHub(
         } catch {
           throw new PosError("Invalid JSON");
         }
-        const result = engine.execute(parsed, actor);
+        const result = await (execute || ((c, a) => engine.execute(c, a)))(
+          parsed,
+          actor,
+        );
         res.end(JSON.stringify(result));
         return;
       }

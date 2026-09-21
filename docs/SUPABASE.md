@@ -13,12 +13,14 @@ The POS cloud project is **Angel Steak house Pos**
 The schema is already applied on that project. To recreate it on a new
 project, open SQL Editor and execute `supabase/001_restaurant.sql` once. It creates:
 
-- `pos_restaurants`: a restaurant and its authoritative hub identity.
+- `pos_restaurants`: a restaurant row.
 - `pos_members`: users and waiter/manager permissions.
-- `pos_snapshots`: latest restaurant state for mobile readers.
+- `pos_hubs`: each Windows computer that is sharing this restaurant.
+- `pos_events`: the ordered command log both computers apply.
+- `pos_snapshots`: latest restaurant state for mobile readers (menu, tables, and orders live in this JSON, not as separate SQL tables).
 - `pos_commands`: mobile commands and their result.
 - `pos_submit_command`: validates membership and fixes command ownership server-side.
-- `pos_claim_hub`: prevents a blank second desktop from replacing your restaurant state.
+- `pos_claim_hub`: registers a Windows computer; more than one till is allowed.
 
 The migration enables row-level security. Authenticated mobile clients can read their own memberships, restaurant snapshot and commands. They cannot directly overwrite snapshots or command results. Only the server-side desktop bridge can do so.
 
@@ -44,28 +46,13 @@ No public signup workflow is included. Staff are provisioned by the project owne
 
 ## 3. Configure the Windows hub
 
-Open desktop **Settings → Supabase & local data** to find its data folder. Close the app. Copy the contents of `desktop/desktop-config.example.json` into `desktop-config.json` in that data folder. If the file already exists, retain its printer assignments and port and add the `supabase` object.
+The Windows installer writes the Angel Steakhouse Supabase URL, restaurant UUID, and service-role key into that computer's `desktop-config.json` on first launch. You do not copy those values by hand onto each till. Printer names stay local — set kitchen/bar/bill printers in Settings on each machine.
 
-```json
-{
-  "port": 47831,
-  "printers": {
-    "named": [],
-    "kitchen": "",
-    "bar": "",
-    "bill": ""
-  },
-  "supabase": {
-    "url": "https://nebpmyoglgmaztexbchl.supabase.co",
-    "serviceRoleKey": "YOUR_SERVER_ONLY_SERVICE_ROLE_KEY",
-    "restaurantId": "2fa67e09-df28-4be7-a90d-03dab6436936"
-  }
-}
-```
+This desktop has full backend privileges. Do not put the service-role key in the phone app, frontend source, Git, or a screenshot. The preload API deliberately never returns it to the renderer. GitHub Actions injects the key from the `POS_SUPABASE_SERVICE_ROLE_KEY` repository secret when it builds the installer.
 
-Use the project's server-side service role key here only. This desktop has full backend privileges: use a dedicated project for the restaurant and restrict access to its Windows account/data folder. Do not put that key in the phone app, frontend source, Git, or a screenshot. The preload API deliberately never returns it to the renderer.
+Restart the app. Settings should show cloud status. The first computer publishes the current menu, tables, and orders. The second computer starts empty, downloads that snapshot, then both follow `pos_events`. Each till prints only the tickets for actions taken on that computer, so set kitchen/bar/bill printers on both machines (network printers can be selected on both).
 
-Restart the app. Settings should show cloud status. The first successful connection claims the restaurant for this SQLite database and publishes its snapshot. Keep this original database or its full backup; a newly created database has a different hub identity and is refused by the bridge.
+Keep each computer's SQLite file. A brand-new empty database on a second PC is expected: it loads from the cloud instead of replacing it.
 
 ## 4. Connect a phone through the internet
 
@@ -86,9 +73,9 @@ Send a small test order from the phone. Verify it appears on the desktop and cre
 
 ## Recovery and operation
 
-Use only one running instance/database for a restaurant. Moving to a new PC means restoring the original full SQLite backup and desktop configuration. The app already prevents two instances of the same installation from opening simultaneously.
+Two Windows tills can run at the same time when both are connected to this project. They must stay online to share new orders. If both people change the same table at the same moment, one action is kept and the other till asks to refresh.
 
-Do not clear or reassign `hub_id` casually: doing so may overwrite existing cloud snapshots. A deliberately fresh replacement requires an administrator to reconcile pending commands and historical data first.
+The app still prevents two windows of the same installation from opening on one PC. Moving a till to a new computer: install the app, start empty so it reloads from the cloud, then set that PC's printers. Or restore that PC's SQLite backup and keep its `desktop-config.json`.
 
 Supabase snapshots are a sync/read model, not a complete desktop backup. They omit the command ledger and paired-device hashes. Back up SQLite separately. Pending commands are retried through the durable ledger even if the desktop crashed after applying a command but before updating its cloud status.
 

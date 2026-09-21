@@ -2,7 +2,7 @@
 
 ## Install and start
 
-Use Node.js 24 LTS for development/builds. Run `npm ci`, then `npm start`. `npm run dist:win` creates the installer on Windows. After installation, Node is bundled through Electron; staff do not need to install Node to run the packaged app.
+Use Node.js 24 LTS for development/builds. Run `npm ci`, then `npm start`. `npm run dist:win` creates the installer on Windows. After installation, Node is bundled through Electron; staff do not need to install Node to run the packaged app. The first launch writes the shared Angel Steakhouse Supabase connection into that PC's data folder so a second till does not need a hand-edited `desktop-config.json`.
 
 ## Automatic Windows updates
 

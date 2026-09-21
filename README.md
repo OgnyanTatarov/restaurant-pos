@@ -87,7 +87,7 @@ Select your Apple development team and device in Xcode, then Run. Normal iPhone 
 
 Internet is unnecessary for this local connection, but the phone and desktop must be able to reach each other on the local network. Mobile devices do not independently accept new orders while disconnected from both the desktop and cloud. They retain a cached view and any action whose confirmation was lost.
 
-Supabase is optional for local use. To enable remote connections, follow [Supabase setup](docs/SUPABASE.md). This is a single-authoritative-desktop architecture, not a multi-master sync implementation. One restaurant uses one active Windows hub.
+Supabase is optional for local use. To enable remote phones and two Windows tills, follow [Supabase setup](docs/SUPABASE.md). Both computers use the same project URL, restaurant UUID, and service-role key. Each keeps its own printer list.
 
 ## Other guides
 

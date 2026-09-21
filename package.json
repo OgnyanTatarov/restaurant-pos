@@ -1,6 +1,6 @@
 {
   "name": "restaurant-pos",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Local-first restaurant POS for Windows, Android and iOS",
   "author": "Restaurant POS",

@@ -10,6 +10,7 @@ const path = require("node:path"),
   fs = require("node:fs"),
   os = require("node:os");
 const { assertManagerPin } = require("./kiosk.cjs");
+const { bakedSupabase, applyBakedSupabase } = require("./config.cjs");
 let win,
   engine,
   hub,
@@ -64,6 +65,17 @@ if (!app.requestSingleInstanceLock()) {
         }
       }
       config.printers = normalizePrinters(config.printers);
+      const saveConfig = () => {
+        fs.writeFileSync(configPath + ".tmp", JSON.stringify(config, null, 2), {
+          mode: 0o600,
+        });
+        fs.renameSync(configPath + ".tmp", configPath);
+      };
+      const baked = applyBakedSupabase(config, bakedSupabase());
+      if (baked.changed) {
+        config = baked.config;
+        saveConfig();
+      }
       const { parseUpdateFeed, createUpdater } = require("./updater.cjs");
       let bakedFeed = {};
       try {
@@ -85,6 +97,13 @@ if (!app.requestSingleInstanceLock()) {
         app,
         getFeed: resolveFeed,
       });
+      const cloud = startCloud(engine, config.supabase, (s) => (cloudStatus = s));
+      stopCloud = () => cloud.stop();
+      const desktopActor = () => ({
+        id: engine.state.hubId,
+        name: "Desktop manager",
+        role: "manager",
+      });
       try {
         hub = await createHub(engine, {
           port: config.port,
@@ -92,11 +111,11 @@ if (!app.requestSingleInstanceLock()) {
           tlsKey: config.tlsKey,
           printers: () => publicPrinters(config.printers),
           updatesDir,
+          execute: (c, actor) => cloud.submit(c, actor),
         });
       } catch (e) {
         hubError = e.message;
       }
-      stopCloud = startCloud(engine, config.supabase, (s) => (cloudStatus = s));
       const kiosk = app.isPackaged;
       win = new BrowserWindow({
         width: 1440,
@@ -164,12 +183,6 @@ if (!app.requestSingleInstanceLock()) {
             return { ok: false, error: e.message };
           }
         });
-      const saveConfig = () => {
-        fs.writeFileSync(configPath + ".tmp", JSON.stringify(config, null, 2), {
-          mode: 0o600,
-        });
-        fs.renameSync(configPath + ".tmp", configPath);
-      };
       const print = async (job) => {
         const deviceName = deviceForJob(config.printers, job);
         const printers = await win.webContents.getPrintersAsync();
@@ -216,7 +229,7 @@ if (!app.requestSingleInstanceLock()) {
         actor: { id: "desktop", name: "Desktop manager", role: "manager" },
         printers: publicPrinters(config.printers),
       }));
-      handle("pos:command", (c) => engine.execute(c));
+      handle("pos:command", (c) => cloud.submit(c, desktopActor()));
       handle("pos:info", () => ({
         addresses: Object.values(os.networkInterfaces())
           .flat()

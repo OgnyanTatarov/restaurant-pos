@@ -3654,8 +3654,9 @@ function DesktopSettings({
         <h2>Supabase & local data</h2>
         <p>{info?.cloud?.message || "Not configured"}</p>
         <p>
-          Follow docs/SUPABASE.md to connect your project. Keep the server key
-          on this computer only.
+          This install connects to the restaurant cloud automatically. Set
+          printers on this computer. Keep the server key off phones and
+          screenshots.
         </p>
         <small>Data folder</small>
         <code className="address">{info?.dataPath}</code>
