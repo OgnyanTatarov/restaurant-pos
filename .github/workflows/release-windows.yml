@@ -3,6 +3,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
@@ -20,7 +21,22 @@ jobs:
         env:
           POS_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.POS_SUPABASE_SERVICE_ROLE_KEY }}
         run: node -e "if(!process.env.POS_SUPABASE_SERVICE_ROLE_KEY) throw new Error('Add the POS_SUPABASE_SERVICE_ROLE_KEY repository secret'); require('fs').writeFileSync('desktop/supabase.local.json', JSON.stringify({serviceRoleKey:process.env.POS_SUPABASE_SERVICE_ROLE_KEY}))"
-      - run: npm run dist:win:publish
+      - name: Build Windows installer
+        run: npm run dist:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Upload installer and update feed
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tag = "v$version"
+          gh release view $tag
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title $tag --notes "Windows installer $version"
+          }
+          gh release upload $tag --clobber `
+            release/latest.yml `
+            "release/Restaurant-POS-Setup-$version.exe" `
+            "release/Restaurant-POS-Setup-$version.exe.blockmap"
