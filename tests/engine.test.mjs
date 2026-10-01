@@ -241,6 +241,55 @@ test("close rejects unsent items and stores integer minor-unit totals", () => {
   assert.throws(() => change(e, id, "order.add", {}), /closed/);
   e.close();
 });
+test("only a manager can delete a closed paid order", () => {
+  const e = setup(),
+    id = open(e);
+  add(e, id);
+  change(e, id, "order.send");
+  assert.throws(() => change(e, id, "order.delete"), /closed paid/);
+  change(e, id, "order.close", { payment: "cash" });
+  const waiter = { id: "waiter", name: "Waiter", role: "waiter" };
+  assert.throws(
+    () =>
+      e.execute(
+        command("order.delete", {
+          orderId: id,
+          version: e.state.orders[0].version,
+        }),
+        waiter,
+      ),
+    /Manager/,
+  );
+  assert.equal(e.state.orders[0].status, "paid");
+  change(e, id, "order.delete");
+  assert.equal(e.state.orders[0].status, "deleted");
+  e.close();
+});
+test("a percentage discount comes off the whole bill", () => {
+  const e = setup(),
+    id = open(e);
+  add(e, id);
+  change(e, id, "order.send");
+  const gross = total(e.state.orders[0]);
+  assert.throws(
+    () => change(e, id, "order.discount", { percent: 110 }),
+    /discount/,
+  );
+  change(e, id, "order.discount", { percent: 10 });
+  const net = gross - Math.round((gross * 10) / 100);
+  assert.equal(e.state.orders[0].discount, 10);
+  assert.equal(unpaidTotal(e.state.orders[0]), net);
+  change(e, id, "order.printBill", { printerId: "upstairs" });
+  const job = e.state.jobs.find((j) => j.station === "bill");
+  assert.equal(job.discount, 10);
+  const html = billHtml(job, e.state.settings);
+  assert.ok(html.includes("DISCOUNT 10%"));
+  assert.ok(html.includes(`>${(net / 100).toFixed(2)}<`));
+  change(e, id, "order.close", { payment: "card" });
+  assert.equal(e.state.orders[0].status, "paid");
+  assert.equal(e.state.orders[0].paidTotal, net);
+  e.close();
+});
 test("bill shares mark selected items paid, then close when the last share is taken", () => {
   const e = setup(),
     id = open(e);
@@ -748,8 +797,10 @@ test("order.printBill queues a guest bill for a named printer", () => {
   assert.equal(job.kind, "BILL");
   assert.equal(job.printerId, "upstairs");
   const html = billHtml(job, { ...e.state.settings, paperWidth: 80 });
-  assert.ok(html.includes('class="logo"'));
-  assert.ok(html.includes("data:image/png;base64,"));
+  assert.ok(html.includes(`class="brand center">${e.state.settings.name}`));
+  assert.ok(html.includes("h1.brand{font-size:"));
+  assert.ok(!html.includes("data:image"));
+  assert.ok(html.includes("padding:2mm 12mm 2mm 1mm"));
   assert.ok(html.includes("SUB TOTAL"));
   assert.ok(html.includes("TOTAL"));
   assert.ok(html.includes("NOT PAID"));

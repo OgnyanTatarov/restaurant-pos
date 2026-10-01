@@ -229,13 +229,55 @@ html.native main {
   background: #244138;
 }
 .sidebar-bottom {
-  margin-top: auto;
+  margin-top: 0;
   display: flex;
   align-items: center;
   gap: 11px;
   font-size: 0.875rem;
   padding: 16px 5px 0;
   border-top: 1px solid #345047;
+}
+.sidebar-foot {
+  margin-top: auto;
+}
+.admin-switch {
+  width: 100%;
+  margin-top: 12px;
+  background: #e3f9d0;
+  color: #12332c;
+  border: 0;
+}
+.sidebar .admin-switch:hover {
+  background: #f4ffe8;
+  border-color: transparent;
+}
+.total.minor {
+  margin: 0 0 6px;
+}
+.total.minor strong {
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+.discount-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+.discount-row label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #60776e;
+}
+.discount-row input {
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
 }
 .sidebar-bottom small {
   color: #a0bdb1;
@@ -341,6 +383,20 @@ main {
 }
 .section-toolbar h2 {
   margin: 0;
+}
+.day-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.day-nav strong {
+  min-width: 11rem;
+  text-align: center;
+  font-size: 0.95rem;
+}
+.day-nav button {
+  min-width: 42px;
+  padding: 9px;
 }
 .tabs {
   display: flex;
@@ -953,21 +1009,38 @@ main {
 }
 .history-row {
   width: 100%;
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid #edf1ed;
+}
+.history-open {
+  flex: 1;
+  min-width: 0;
   display: grid;
   grid-template-columns: 2fr 1fr 1fr 25px;
   gap: 15px;
   text-align: left;
   justify-items: start;
   border: 0;
-  border-top: 1px solid #edf1ed;
   border-radius: 0;
+  background: transparent;
   padding: 20px 24px;
 }
-.history-row small {
+.history-open:hover {
+  background: #f7faf8;
+}
+.history-open small {
   margin-top: 5px;
 }
-.history-row > strong {
+.history-open > strong {
   justify-self: end;
+}
+.history-delete {
+  align-self: center;
+  margin-right: 12px;
+  color: #9a3b3b;
+  border-color: #e4c8c8;
+  background: #fff;
 }
 .stations {
   display: grid;
@@ -1195,8 +1268,11 @@ form footer {
 }
 .connect-page {
   min-height: 100dvh;
-  display: grid;
-  place-items: center;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
   background: #12332c;
   padding: 25px;
 }
@@ -1210,11 +1286,13 @@ html.native .connect-page {
   -webkit-overflow-scrolling: touch;
 }
 .connect-card {
-  width: 460px;
-  max-width: 100%;
+  width: 100%;
+  max-width: 460px;
+  min-width: 0;
   border-radius: 20px;
   background: white;
   padding: 35px;
+  box-sizing: border-box;
 }
 .connect-card .brand-mark {
   margin-bottom: 24px;
@@ -1296,6 +1374,7 @@ html.native .connect-page {
   .brand > span,
   .workspace-label,
   .sidebar-bottom,
+  .admin-switch span,
   .sidebar nav button:not(.active) .nav-count {
     display: none;
   }
@@ -1310,6 +1389,11 @@ html.native .connect-page {
     justify-content: center;
     padding: 12px;
     gap: 0;
+  }
+  .admin-switch {
+    justify-content: center;
+    padding: 12px;
+    margin-top: 10px;
   }
   .sidebar nav button svg {
     width: 23px;
@@ -1482,15 +1566,15 @@ html.native .connect-page {
     grid-column: 1/-1;
     justify-content: flex-end;
   }
-  .history-row {
+  .history-open {
     grid-template-columns: 1.4fr 0.7fr 1fr;
     padding: 17px 15px;
     gap: 8px;
   }
-  .history-row > svg {
+  .history-open > svg {
     display: none;
   }
-  .history-row small {
+  .history-open small {
     font-size: 0.75rem;
   }
   .veil {

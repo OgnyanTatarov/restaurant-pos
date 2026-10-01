@@ -48,10 +48,22 @@ export const unitAmount = (i) => {
 export const lineTotal = (i) => unitAmount(i) * i.qty;
 export const unpaidQty = (i) =>
   i.voided ? 0 : Math.max(0, i.qty - (i.paidQty || 0));
-export const unpaidTotal = (o) =>
-  o.items.reduce((n, i) => n + unitAmount(i) * unpaidQty(i), 0);
 export const total = (o) =>
   o.items.filter((i) => !i.voided).reduce((n, i) => n + lineTotal(i), 0);
+export function discountPercent(o) {
+  const n = o?.discount;
+  return Number.isInteger(n) && n >= 0 && n <= 100 ? n : 0;
+}
+export const discountValue = (o) =>
+  Math.round((total(o) * discountPercent(o)) / 100);
+export const netTotal = (o) => total(o) - discountValue(o);
+const paidSoFar = (o) =>
+  (o.payments || []).reduce((n, p) => n + (p.amount || 0), 0);
+export const unpaidTotal = (o) => {
+  if (!discountPercent(o))
+    return o.items.reduce((n, i) => n + unitAmount(i) * unpaidQty(i), 0);
+  return Math.max(0, netTotal(o) - paidSoFar(o));
+};
 const paymentLabel = (o) => {
   const methods = [...new Set((o.payments || []).map((p) => p.payment))];
   return methods.length === 1 ? methods[0] : methods.length ? "split" : "";
@@ -406,6 +418,7 @@ export class Engine {
         "table.delete",
         "settings.save",
         "order.void",
+        "order.delete",
         "job.retry",
         "job.resolve",
         "demo.load",
@@ -471,6 +484,7 @@ export class Engine {
         const seen = new Set();
         const paidItems = [];
         let amount = 0;
+        const dueBefore = unpaidTotal(o);
         for (const sel of selections.slice(0, 200)) {
           if (!sel || typeof sel !== "object") fail("Invalid share item");
           const itemId = text(sel.itemId, "item");
@@ -488,7 +502,22 @@ export class Engine {
           paidItems.push({ id: i.id, name: i.name, qty, amount: line });
         }
         if (seen.size !== selections.length) fail("Invalid share selection");
-        if (!amount) fail("Share total must be greater than zero");
+        const percent = discountPercent(o);
+        if (percent) {
+          const still = o.items.reduce(
+            (n, i) => n + unitAmount(i) * unpaidQty(i),
+            0,
+          );
+          amount =
+            still === 0
+              ? dueBefore
+              : Math.round((amount * (100 - percent)) / 100);
+        }
+        if (!amount) {
+          if (!percent) fail("Share total must be greater than zero");
+          o.paidTotal = collectedTotal(o);
+          return 0;
+        }
         o.payments = o.payments || [];
         o.payments.push({
           id: p.paymentId ? text(p.paymentId, "payment", 80) : randomUUID(),
@@ -951,6 +980,16 @@ export class Engine {
           result = { amount, closed };
           break;
         }
+        case "order.discount": {
+          const o = order();
+          const percent = integer(p.percent, "discount", 0, 100);
+          const net = total(o) - Math.round((total(o) * percent) / 100);
+          if (collectedTotal(o) > net)
+            fail("Discount is larger than the amount still unpaid");
+          o.discount = percent;
+          o.version++;
+          break;
+        }
         case "order.close": {
           const o = order();
           if (o.items.some((i) => !i.sent && !i.voided))
@@ -1002,9 +1041,25 @@ export class Engine {
             actor: actor.name,
             printerId,
             payment: methods.length === 1 ? methods[0] : methods.length ? "split" : "",
+            discount: discountPercent(o),
             amount: unpaidTotal(o),
             total: total(o),
           });
+          break;
+        }
+        case "order.delete": {
+          const o = s.orders.find((o) => o.id === p.orderId);
+          if (!o) fail("Order not found", 404);
+          if (o.status !== "paid")
+            fail("Only a closed paid order can be deleted");
+          if (p.version !== o.version)
+            fail(
+              "This order changed on another device. Refresh and try again.",
+              409,
+            );
+          o.status = "deleted";
+          o.version++;
+          log("order.delete", o.tableName);
           break;
         }
         case "order.void": {

@@ -70,6 +70,7 @@ export type Order = {
   openedBy: string;
   payment?: string;
   paidTotal?: number;
+  discount?: number;
   payments?: BillPayment[];
   reason?: string;
 };
@@ -113,6 +114,8 @@ export type Job = {
   attempts: number;
   error: string;
   printerId?: string;
+  discount?: number;
+  payment?: string;
 };
 export type NamedPrinter = { id: string; name: string; device?: string };
 export type PrinterAssignments = {

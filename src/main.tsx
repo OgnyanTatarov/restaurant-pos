@@ -22,6 +22,7 @@ import {
   ArrowRightLeft,
   Scissors,
   History,
+  ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
   LockKeyhole,
@@ -74,7 +75,19 @@ const unpaidQty = (i: Item) =>
 const unpaidAmount = (i: Item) => unitAmount(i) * unpaidQty(i);
 const sum = (o: Order) =>
   o.items.filter((i) => !i.voided).reduce((n, i) => n + lineAmount(i), 0);
-const due = (o: Order) => o.items.reduce((n, i) => n + unpaidAmount(i), 0);
+function discountPercent(o: Order) {
+  const n = o.discount || 0;
+  return Number.isInteger(n) && n >= 0 && n <= 100 ? n : 0;
+}
+const discountAmount = (o: Order) =>
+  Math.round((sum(o) * discountPercent(o)) / 100);
+const net = (o: Order) => sum(o) - discountAmount(o);
+const due = (o: Order) => {
+  if (!discountPercent(o))
+    return o.items.reduce((n, i) => n + unpaidAmount(i), 0);
+  const paid = (o.payments || []).reduce((n, p) => n + p.amount, 0);
+  return Math.max(0, net(o) - paid);
+};
 const STEAK_COOKS = [
   "Blue",
   "Rare",
@@ -159,6 +172,66 @@ const date = (s: string) =>
     hour: "2-digit",
     minute: "2-digit",
   });
+function dayKey(iso?: string) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function todayKey() {
+  return dayKey(new Date().toISOString());
+}
+function shiftDay(key: string, by: number) {
+  const [y, m, d] = key.split("-").map(Number);
+  const next = new Date(y, m - 1, d + by);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${next.getFullYear()}-${p(next.getMonth() + 1)}-${p(next.getDate())}`;
+}
+function formatDay(key: string) {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+}
+function DayNav({
+  day,
+  onChange,
+}: {
+  day: string | null;
+  onChange: (day: string | null) => void;
+}) {
+  const today = todayKey();
+  const current = day || today;
+  const atToday = current >= today;
+  return (
+    <div className="day-nav">
+      <button
+        type="button"
+        aria-label="Previous day"
+        onClick={() => onChange(shiftDay(current, -1))}
+      >
+        <ChevronLeft size={18} />
+      </button>
+      <strong>
+        {current === today ? `Today · ${formatDay(current)}` : formatDay(current)}
+      </strong>
+      <button
+        type="button"
+        aria-label="Next day"
+        disabled={atToday}
+        onClick={() => {
+          const next = shiftDay(current, 1);
+          onChange(next >= today ? null : next);
+        }}
+      >
+        <ChevronRight size={18} />
+      </button>
+    </div>
+  );
+}
 function Modal({
   title,
   children,
@@ -218,6 +291,9 @@ function App() {
   const [info, setInfo] = useState<any>(null);
   const [unresolved, setUnresolved] = useState(pending());
   const [settingsUnlocked, setSettingsUnlocked] = useState(false);
+  const [adminView, setAdminView] = useState(false);
+  const [orderDay, setOrderDay] = useState<string | null>(null);
+  const [ticketDay, setTicketDay] = useState<string | null>(null);
   const [printers, setPrinters] =
     useState<PrinterAssignments>(emptyPrinters);
   const refreshing = useRef(false);
@@ -297,7 +373,7 @@ function App() {
   }
   const s = data?.state,
     actor = data?.actor,
-    manager = actor?.role === "manager";
+    manager = adminView;
   const money = (v: number) => {
     try {
       return new Intl.NumberFormat(undefined, {
@@ -329,6 +405,31 @@ function App() {
         o.status !== "deleted" &&
         o.status !== "void",
     ) || [];
+  const viewingOrderDay = orderDay || todayKey();
+  const viewingTicketDay = ticketDay || todayKey();
+  const orderOnDay = (o: (typeof history)[number]) =>
+    (viewingOrderDay === todayKey() && o.status === "open") ||
+    dayKey(o.closedAt || o.createdAt) === viewingOrderDay;
+  const dayOrders = history.filter(
+    (o) => (manager || o.status === "open") && orderOnDay(o),
+  );
+  const paidOnDay = history.filter(
+    (o) =>
+      o.status === "paid" &&
+      dayKey(o.closedAt || o.createdAt) === viewingOrderDay,
+  );
+  function deleteClosedOrder(o: (typeof history)[number]) {
+    confirmAction(
+      "Delete order",
+      `${o.tableName} will be removed from closed orders.`,
+      () =>
+        act(
+          "order.delete",
+          { orderId: o.id, version: o.version },
+          "Order deleted",
+        ),
+    );
+  }
   function confirmAction(
     title: string,
     description: string,
@@ -395,6 +496,54 @@ function App() {
       if (r) setSelected(r.orderId);
     }
   }
+  function leaveAdmin() {
+    setAdminView(false);
+    setSettingsUnlocked(false);
+    if (!["floor", "menu", "printing"].includes(page)) {
+      setPage("floor");
+      setSelected(null);
+    }
+  }
+  function openAdmin() {
+    if (!s) return;
+    setError("");
+    setModal(
+      <Modal title="Admin view" onClose={() => setModal(null)}>
+        <PinGate
+          hasPin={!!s.settings.managerPinHash}
+          intro={
+            s.settings.managerPinHash
+              ? "Enter the manager PIN. Until then the till stays on the floor, menu and tickets."
+              : "Choose a 4 to 12 digit PIN. The till stays in waiter view until this PIN is entered."
+          }
+          onUnlock={async (pin) => {
+            if (!s.settings.managerPinHash) {
+              if (
+                await act(
+                  "settings.save",
+                  { settings: s.settings, pin },
+                  "PIN set",
+                )
+              ) {
+                setAdminView(true);
+                setSettingsUnlocked(true);
+                setModal(null);
+              }
+              return;
+            }
+            if ((await pinHash(pin)) !== s.settings.managerPinHash) {
+              setError("Incorrect PIN");
+              return;
+            }
+            setError("");
+            setAdminView(true);
+            setSettingsUnlocked(true);
+            setModal(null);
+          }}
+        />
+      </Modal>,
+    );
+  }
   const nav = (
     [
       ["floor", "Floor", LayoutGrid],
@@ -405,7 +554,9 @@ function App() {
       ["analytics", "Analytics", BarChart3],
       ["settings", "Settings", Settings],
     ] as const
-  ).filter(([key]) => manager || (key !== "settings" && key !== "analytics"));
+  ).filter(([key]) =>
+    manager || ["floor", "menu", "printing"].includes(key),
+  );
   if (setup)
     return (
       <Connect
@@ -458,12 +609,22 @@ function App() {
             </button>
           ))}
         </nav>
-        <div className="sidebar-bottom">
-          <div className="avatar">{manager ? "M" : "W"}</div>
-          <div>
-            <strong>{actor?.name || "Connecting"}</strong>
-            <small>{manager ? "Manager" : "Waiter"}</small>
+        <div className="sidebar-foot">
+          <div className="sidebar-bottom">
+            <div className="avatar">{manager ? "M" : "W"}</div>
+            <div>
+              <strong>{manager ? actor?.name || "Manager" : "Waiter"}</strong>
+              <small>{manager ? "Admin" : "Waiter"}</small>
+            </div>
           </div>
+          <button
+            type="button"
+            className="admin-switch"
+            onClick={() => (adminView ? leaveAdmin() : openAdmin())}
+          >
+            <LockKeyhole size={18} />
+            <span>{adminView ? "Waiter view" : "Admin view"}</span>
+          </button>
         </div>
       </aside>
       <main>
@@ -1042,18 +1203,72 @@ function App() {
                       })}
                     </div>
                     <div className="order-footer">
+                      {discountPercent(order) > 0 && (
+                        <>
+                          <div className="total minor">
+                            <span>Subtotal</span>
+                            <strong>{money(sum(order))}</strong>
+                          </div>
+                          <div className="total minor">
+                            <span>Discount {discountPercent(order)}%</span>
+                            <strong>-{money(discountAmount(order))}</strong>
+                          </div>
+                        </>
+                      )}
                       <div className="total">
                         <span>
-                          {due(order) < sum(order) ? "Still to pay" : "Total"}
+                          {due(order) < net(order) ? "Still to pay" : "Total"}
                         </span>
                         <strong>{money(due(order))}</strong>
                       </div>
-                      {due(order) < sum(order) && (
+                      {due(order) < net(order) && (
                         <p className="muted bill-progress">
-                          {money(sum(order) - due(order))} paid of{" "}
-                          {money(sum(order))}
+                          {money(net(order) - due(order))} paid of{" "}
+                          {money(net(order))}
                         </p>
                       )}
+                      <form
+                        className="discount-row"
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          const input = new FormData(e.currentTarget).get(
+                            "discount",
+                          );
+                          const percent = Math.round(Number(input) || 0);
+                          if (percent < 0 || percent > 100) {
+                            setError("Discount must be from 0 to 100");
+                            return;
+                          }
+                          await act(
+                            "order.discount",
+                            {
+                              orderId: order.id,
+                              version: order.version,
+                              percent,
+                            },
+                            percent
+                              ? `${percent}% discount applied`
+                              : "Discount removed",
+                          );
+                        }}
+                      >
+                        <label>
+                          Discount %
+                          <input
+                            name="discount"
+                            type="number"
+                            min={0}
+                            max={100}
+                            inputMode="numeric"
+                            placeholder="0"
+                            defaultValue={order.discount || ""}
+                            key={order.version}
+                          />
+                        </label>
+                        <button type="submit" disabled={busy || !online}>
+                          Apply
+                        </button>
+                      </form>
                       <button
                         className="primary full"
                         disabled={
@@ -1426,21 +1641,20 @@ function App() {
             {page === "orders" && (
               <>
                 <div className="stats">
-                  <div>
-                    <span>Paid today</span>
-                    <strong>
-                      {money(
-                        history
-                          .filter(
-                            (o) =>
-                              o.status === "paid" &&
-                              new Date(o.closedAt!).toDateString() ===
-                                new Date().toDateString(),
-                          )
-                          .reduce((n, o) => n + (o.paidTotal || 0), 0),
-                      )}
-                    </strong>
-                  </div>
+                  {manager && (
+                    <div>
+                      <span>
+                        {viewingOrderDay === todayKey()
+                          ? "Paid today"
+                          : `Paid ${formatDay(viewingOrderDay)}`}
+                      </span>
+                      <strong>
+                        {money(
+                          paidOnDay.reduce((n, o) => n + (o.paidTotal || 0), 0),
+                        )}
+                      </strong>
+                    </div>
+                  )}
                   <div>
                     <span>Open orders</span>
                     <strong>{open.length}</strong>
@@ -1448,13 +1662,14 @@ function App() {
                 </div>
                 <div className="panel">
                   <div className="section-toolbar">
-                    <h2>All orders</h2>
-                    <span className="muted">Newest first</span>
+                    <h2>Orders</h2>
+                    <DayNav day={orderDay} onChange={setOrderDay} />
                   </div>
-                  {[...history].reverse().map((o) => (
+                  {[...dayOrders].reverse().map((o) => (
+                    <div className="history-row" key={o.id}>
                     <button
-                      className="history-row"
-                      key={o.id}
+                      type="button"
+                      className="history-open"
                       onClick={() => {
                         if (o.status === "open") {
                           setSelected(o.id);
@@ -1516,9 +1731,18 @@ function App() {
                                 </p>
                               ))}
                               <p>{o.reason}</p>
+                              {manager && o.status === "paid" && (
+                                <button
+                                  type="button"
+                                  onClick={() => deleteClosedOrder(o)}
+                                >
+                                  <Trash2 size={17} />
+                                  Delete order
+                                </button>
+                              )}
                               <div className="total">
                                 <span>{o.payment || o.status}</span>
-                                <strong>{money(o.paidTotal ?? sum(o))}</strong>
+                                <strong>{money(o.paidTotal ?? net(o))}</strong>
                               </div>
                             </Modal>,
                           );
@@ -1537,14 +1761,29 @@ function App() {
                       >
                         {o.status}
                       </span>
-                      <strong>{money(o.paidTotal ?? sum(o))}</strong>
+                      <strong>{money(o.paidTotal ?? net(o))}</strong>
                       <ChevronRight size={18} />
                     </button>
+                    {manager && o.status === "paid" && (
+                      <button
+                        type="button"
+                        className="history-delete"
+                        aria-label={`Delete ${o.tableName}`}
+                        onClick={() => deleteClosedOrder(o)}
+                      >
+                        <Trash2 size={17} />
+                      </button>
+                    )}
+                    </div>
                   ))}
-                  {!history.length && (
+                  {!dayOrders.length && (
                     <div className="empty">
                       <History size={36} />
-                      <p>Orders will appear here as service starts.</p>
+                      <p>
+                        {viewingOrderDay === todayKey()
+                          ? "Today’s orders will appear here as service starts."
+                          : "No orders on this day."}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -1556,25 +1795,32 @@ function App() {
                   Tickets marked “spooled” were accepted by the printer driver.
                   Check the paper before retrying a failed or uncertain ticket.
                 </div>
+                <div className="section-toolbar">
+                  <h2>Tickets</h2>
+                  <DayNav day={ticketDay} onChange={setTicketDay} />
+                </div>
                 <div className="stations">
-                  {(["kitchen", "bar", "bill"] as const).map((station) => (
+                  {(["kitchen", "bar", "bill"] as const).map((station) => {
+                    const tickets = [...s.jobs].reverse().filter((j) => {
+                      if (j.station !== station) return false;
+                      if (dayKey(j.createdAt) === viewingTicketDay) return true;
+                      return (
+                        viewingTicketDay === todayKey() &&
+                        ["queued", "printing", "error", "uncertain"].includes(
+                          j.status,
+                        )
+                      );
+                    });
+                    return (
                     <section className="panel" key={station}>
                       <div className="section-toolbar">
                         <h2 className="capitalize">{station}</h2>
                         <span className="pill">
-                          {
-                            s.jobs.filter(
-                              (j) =>
-                                j.station === station && j.status === "queued",
-                            ).length
-                          }{" "}
+                          {tickets.filter((j) => j.status === "queued").length}{" "}
                           queued
                         </span>
                       </div>
-                      {[...s.jobs]
-                        .reverse()
-                        .filter((j) => j.station === station)
-                        .map((j) => (
+                      {tickets.map((j) => (
                           <article className="ticket-card" key={j.id}>
                             <div className="row between">
                               <strong>{j.tableName}</strong>
@@ -1647,14 +1893,15 @@ function App() {
                               )}
                           </article>
                         ))}
-                      {!s.jobs.some((j) => j.station === station) && (
+                      {!tickets.length && (
                         <div className="empty compact">
                           <Printer size={30} />
-                          <p>No tickets yet</p>
+                          <p>No tickets on this day</p>
                         </div>
                       )}
                     </section>
-                  ))}
+                    );
+                  })}
                 </div>
               </>
             )}
@@ -2791,14 +3038,21 @@ function ShareBill({
   const shareItems = Object.entries(picks)
     .filter(([, qty]) => qty > 0)
     .map(([itemId, qty]) => ({ itemId, qty }));
-  const shareTotal = shareItems.reduce((n, s) => {
+  const shareGross = shareItems.reduce((n, s) => {
     const i = order.items.find((x) => x.id === s.itemId);
     return n + (i ? unitAmount(i) * s.qty : 0);
   }, 0);
-  const remainingAfter = due(order) - shareTotal;
   const closesTable = unpaid.every(
     (i) => i.sent && (picks[i.id] || 0) === unpaidQty(i),
   );
+  const percent = discountPercent(order);
+  const shareTotal =
+    percent && closesTable
+      ? due(order)
+      : percent
+        ? Math.round((shareGross * (100 - percent)) / 100)
+        : shareGross;
+  const remainingAfter = due(order) - shareTotal;
   function setQty(id: string, qty: number, max: number) {
     setPicks((current) => {
       const next = { ...current };
@@ -2812,6 +3066,7 @@ function ShareBill({
       <p>
         Select what this person had. Their total updates as you tap. After you
         record the payment, those items are crossed off the bill.
+        {percent > 0 ? ` A ${percent}% discount applies to the whole bill.` : ""}
       </p>
       {paid.length > 0 && <h3 className="share-heading">Already paid</h3>}
       {paid.map((i) => (
@@ -3141,9 +3396,11 @@ function SettingsForm({
 function PinGate({
   hasPin,
   onUnlock,
+  intro,
 }: {
   hasPin: boolean;
   onUnlock: (pin: string) => Promise<void>;
+  intro?: string;
 }) {
   const [pin, setPin] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -3153,9 +3410,10 @@ function PinGate({
       <LockKeyhole size={28} />
       <h2>{hasPin ? "Enter manager PIN" : "Set a manager PIN"}</h2>
       <p className="muted">
-        {hasPin
-          ? "Settings stay locked until this device enters the PIN."
-          : "Choose a 4 to 12 digit PIN the first time you open Settings."}
+        {intro ||
+          (hasPin
+            ? "Settings stay locked until this device enters the PIN."
+            : "Choose a 4 to 12 digit PIN the first time you open Settings.")}
       </p>
       <form
         onSubmit={async (e) => {

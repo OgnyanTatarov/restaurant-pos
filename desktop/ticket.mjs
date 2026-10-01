@@ -1,10 +1,3 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const logoSrc = `data:image/png;base64,${readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "angel-logo.png"),
-).toString("base64")}`;
 const escape = (s) =>
   String(s ?? "").replace(
     /[&<>"']/g,
@@ -68,7 +61,9 @@ export function paperMm(settings) {
 function sheet(settings, station, body) {
   const s = ticketSizes(settings, station);
   const paper = paperMm(settings);
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"><style>@page{margin:0;size:${paper}mm auto}html,body{width:${paper}mm;margin:0;padding:2mm 4mm;box-sizing:border-box;overflow:hidden;font:${s.body}px/${Math.round(s.body * 1.2)}px monospace;color:#000}h1{font-size:${s.title}px;margin:6px 0}h2{font-size:${s.heading}px;margin:4px 0}article{border-top:1px dashed;padding:8px 0}small{font-size:${s.meta}px}p{white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0}strong{font-size:${s.item}px;overflow-wrap:anywhere}.cook{font-size:${s.cook}px;font-weight:700}.center{text-align:center}img.logo{display:block;width:46mm;max-width:100%;height:auto;margin:0 auto 2mm}table.lines{width:100%;border-collapse:collapse}table.lines td{vertical-align:top;font-weight:700;font-size:${s.item}px}table.lines td.amt{white-space:nowrap;text-align:right;width:1%;padding-left:8px}ul.mods{margin:2px 0 8px;padding:0;list-style:none}ul.mods li{margin:0}.rule{border-top:1px dashed #000;margin:8px 0}.sum{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:2px 0;font-weight:700}.sum span:last-child{white-space:nowrap}.pay{background:#000;color:#fff;text-align:center;font-weight:700;letter-spacing:1px;padding:8px 4px;margin:10px 0}</style></head><body>${body}</body></html>`;
+  const pad = station === "bill" ? "2mm 12mm 2mm 1mm" : "2mm 4mm";
+  const brand = Math.round(s.body * 1.7);
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>@page{margin:0;size:${paper}mm auto}html,body{width:${paper}mm;margin:0;padding:${pad};box-sizing:border-box;overflow:hidden;font:${s.body}px/${Math.round(s.body * 1.2)}px monospace;color:#000}h1{font-size:${s.title}px;margin:6px 0}h1.brand{font-size:${brand}px;font-weight:700;line-height:1.1;margin:1mm 0 2mm}h2{font-size:${s.heading}px;margin:4px 0}article{border-top:1px dashed;padding:8px 0}small{font-size:${s.meta}px}p{white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0}strong{font-size:${s.item}px;overflow-wrap:anywhere}.cook{font-size:${s.cook}px;font-weight:700}.center{text-align:center}table.lines{width:100%;border-collapse:collapse;table-layout:fixed}table.lines td{vertical-align:top;font-weight:700;font-size:${s.item}px;overflow-wrap:anywhere}table.lines td.amt{white-space:nowrap;text-align:right;width:22mm;padding-left:4px}ul.mods{margin:2px 0 8px;padding:0;list-style:none}ul.mods li{margin:0}.rule{border-top:1px dashed #000;margin:8px 0}.sum{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:2px 0;font-weight:700}.sum span:last-child{white-space:nowrap}.pay{background:#000;color:#fff;text-align:center;font-weight:700;letter-spacing:1px;padding:8px 4px;margin:10px 0}</style></head><body>${body}</body></html>`;
 }
 function itemBlock(i) {
   const lines = ticketLines(i);
@@ -105,8 +100,17 @@ function billNotes(item) {
 export function billHtml(job, settings) {
   const items = (job.items || []).filter((i) => !i.voided);
   const total = items.reduce((n, i) => n + unitAmount(i) * i.qty, 0);
-  const due = items.reduce((n, i) => n + unitAmount(i) * unpaidQty(i), 0);
-  const paid = total - due;
+  const percent = Math.min(
+    100,
+    Math.max(0, Math.round(Number(job.discount) || 0)),
+  );
+  const off = Math.round((total * percent) / 100);
+  const net = total - off;
+  const due =
+    typeof job.amount === "number"
+      ? job.amount
+      : items.reduce((n, i) => n + unitAmount(i) * unpaidQty(i), 0);
+  const paid = Math.max(0, net - due);
   const lines = items
     .map((i) => {
       const notes = billNotes(i);
@@ -120,7 +124,11 @@ export function billHtml(job, settings) {
   return sheet(
     settings,
     "bill",
-    `<img class="logo" alt="" src="${logoSrc}"><h1 class="center">${escape(settings.name)}</h1><p class="center">Table: ${escape(job.tableName)}</p>${lines}<div class="rule"></div><p class="sum"><span>SUB TOTAL</span><span>${amount(total)}</span></p><p class="sum"><span>TOTAL</span><span>${amount(total)}</span></p>${
+    `<h1 class="brand center">${escape(settings.name)}</h1><p class="center">Table: ${escape(job.tableName)}</p>${lines}<div class="rule"></div><p class="sum"><span>SUB TOTAL</span><span>${amount(total)}</span></p>${
+      percent
+        ? `<p class="sum"><span>DISCOUNT ${percent}%</span><span>-${amount(off)}</span></p>`
+        : ""
+    }<p class="sum"><span>TOTAL</span><span>${amount(net)}</span></p>${
       paid
         ? `<p class="sum"><span>PAID</span><span>${amount(paid)}</span></p><p class="sum"><span>DUE</span><span>${amount(due)}</span></p>`
         : ""
