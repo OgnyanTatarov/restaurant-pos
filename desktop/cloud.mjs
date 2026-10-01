@@ -65,7 +65,22 @@ export function startCloud(engine, config, onStatus = () => {}) {
     lastRevision = -1,
     bootstrapped = false,
     lastError = "",
-    gate = Promise.resolve();
+    syncing = false,
+    ingesting = false,
+    bootstrapTask = null;
+  // Local engine applies stay ordered. Network waits stay off this chain so a
+  // phone round-trip cannot pause the till-to-till pull.
+  let applyChain = Promise.resolve();
+  const withEngine = (fn) => {
+    const run = applyChain.then(() => fn());
+    applyChain = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
+  };
+  let publishChain = Promise.resolve();
+  const failures = new Map();
   const request = async (path, options = {}) => {
     const r = await fetch(`${config.url.replace(/\/$/, "")}/rest/v1/${path}`, {
       ...options,
@@ -80,31 +95,29 @@ export function startCloud(engine, config, onStatus = () => {}) {
     if (!r.ok) throw Error(`Supabase ${r.status}: ${await r.text()}`);
     return r.status === 204 ? null : await r.json().catch(() => null);
   };
-  const locked = (fn) => {
-    const run = gate.then(fn, fn);
-    gate = run.catch(() => {});
-    return run;
-  };
   const insertEvent = async (command, actor) => {
     let next = command;
     if (
       (command.type === "demo.load" || command.type === "menu.replace") &&
       !engine.resultOf(command.id)
     ) {
-      engine.execute(command, actor);
-      next = {
-        ...command,
-        payload: {
-          ...command.payload,
-          tables: engine.state.tables,
-          categories: engine.state.categories,
-          menu: engine.state.menu,
-          settings: {
-            name: engine.state.settings.name,
-            currency: engine.state.settings.currency,
+      next = await withEngine(() => {
+        if (engine.resultOf(command.id)) return command;
+        engine.execute(command, actor);
+        return {
+          ...command,
+          payload: {
+            ...command.payload,
+            tables: engine.state.tables,
+            categories: engine.state.categories,
+            menu: engine.state.menu,
+            settings: {
+              name: engine.state.settings.name,
+              currency: engine.state.settings.currency,
+            },
           },
-        },
-      };
+        };
+      });
     }
     await request("pos_events?on_conflict=id", {
       method: "POST",
@@ -126,36 +139,54 @@ export function startCloud(engine, config, onStatus = () => {}) {
         `pos_events?restaurant_id=eq.${encodeURIComponent(config.restaurantId)}&seq=gt.${after}&order=seq.asc&limit=100`,
       );
       if (!events?.length) break;
-      for (const event of events) {
-        const command = event.command || {};
-        try {
-          engine.execute(command, event.actor, {
-            print: event.hub_id === engine.state.hubId,
-          });
-        } catch (e) {
-          if (waitingId && command.id === waitingId) ownError = e;
+      const progressed = await withEngine(() => {
+        let applied = 0;
+        for (const event of events) {
+          if (Number(event.seq) <= engine.eventSeq()) continue;
+          const command = event.command || {};
+          try {
+            engine.execute(command, event.actor, {
+              print: event.hub_id === engine.state.hubId,
+            });
+            failures.delete(command.id);
+          } catch (e) {
+            failures.set(command.id, e);
+            if (waitingId && command.id === waitingId) ownError = e;
+          }
+          engine.setEventSeq(event.seq);
+          applied++;
         }
-        engine.setEventSeq(event.seq);
-      }
-      if (engine.eventSeq() <= after) break;
+        return applied;
+      });
+      if (!progressed) break;
     }
+    if (!ownError && waitingId && failures.has(waitingId))
+      ownError = failures.get(waitingId);
     if (ownError) throw ownError;
   };
-  const publishSnapshot = async () => {
-    if (engine.state.revision === lastRevision) return;
-    const snapshot = engine.snapshot();
-    await request("pos_snapshots?on_conflict=restaurant_id", {
-      method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-      body: JSON.stringify({
-        restaurant_id: config.restaurantId,
-        revision: snapshot.revision,
-        event_seq: engine.eventSeq(),
-        state: snapshot,
-        updated_at: new Date().toISOString(),
-      }),
+  const publishSnapshot = () => {
+    const run = publishChain.then(async () => {
+      if (stopped || engine.state.revision === lastRevision) return;
+      const snapshot = engine.snapshot();
+      const revision = snapshot.revision;
+      await request("pos_snapshots?on_conflict=restaurant_id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({
+          restaurant_id: config.restaurantId,
+          revision,
+          event_seq: engine.eventSeq(),
+          state: snapshot,
+          updated_at: new Date().toISOString(),
+        }),
+      });
+      if (revision > lastRevision) lastRevision = revision;
     });
-    lastRevision = snapshot.revision;
+    publishChain = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
   };
   const ingestMobile = async () => {
     const commands = await request(
@@ -211,25 +242,58 @@ export function startCloud(engine, config, onStatus = () => {}) {
       });
     }
   };
-  const bootstrap = async () => {
-    if (bootstrapped) return;
-    const rows = await request(
-      `pos_snapshots?restaurant_id=eq.${encodeURIComponent(config.restaurantId)}&select=state,event_seq,revision`,
-    );
-    const snap = rows?.[0];
-    const empty =
-      !engine.state.tables.length &&
-      !engine.state.menu.length &&
-      !engine.state.orders.length &&
-      !engine.state.categories.length;
-    if (empty && snap?.state && (snap.state.menu?.length || snap.state.tables?.length || snap.state.orders?.length)) {
-      engine.adoptSnapshot(snap.state);
-      engine.setEventSeq(Number(snap.event_seq) || 0);
-      lastRevision = engine.state.revision;
+  const ensureBootstrap = () => {
+    if (bootstrapped) return Promise.resolve();
+    if (!bootstrapTask) {
+      bootstrapTask = (async () => {
+        const rows = await request(
+          `pos_snapshots?restaurant_id=eq.${encodeURIComponent(config.restaurantId)}&select=state,event_seq,revision`,
+        );
+        await withEngine(() => {
+          if (bootstrapped) return;
+          const snap = rows?.[0];
+          const empty =
+            !engine.state.tables.length &&
+            !engine.state.menu.length &&
+            !engine.state.orders.length &&
+            !engine.state.categories.length;
+          if (
+            empty &&
+            snap?.state &&
+            (snap.state.menu?.length ||
+              snap.state.tables?.length ||
+              snap.state.orders?.length)
+          ) {
+            engine.adoptSnapshot(snap.state);
+            engine.setEventSeq(Number(snap.event_seq) || 0);
+            lastRevision = engine.state.revision;
+          }
+          bootstrapped = true;
+        });
+      })().finally(() => {
+        if (!bootstrapped) bootstrapTask = null;
+      });
     }
-    bootstrapped = true;
+    return bootstrapTask;
+  };
+  // Phone commands are applied beside the sync loop. Their network waits must
+  // not delay the next pull of the other till's events.
+  const ingestOnce = () => {
+    if (ingesting || stopped) return;
+    ingesting = true;
+    ensureBootstrap()
+      .then(() => ingestMobile())
+      .then(() => publishSnapshot())
+      .catch((e) => {
+        lastError = e.message;
+      })
+      .finally(() => {
+        ingesting = false;
+      });
   };
   async function tick() {
+    if (stopped || syncing) return;
+    syncing = true;
     try {
       await request("rpc/pos_claim_hub", {
         method: "POST",
@@ -238,9 +302,9 @@ export function startCloud(engine, config, onStatus = () => {}) {
           p_hub: engine.state.hubId,
         }),
       });
-      await bootstrap();
+      await ensureBootstrap();
       await pullApply();
-      await ingestMobile();
+      ingestOnce();
       await publishSnapshot();
       lastError = "";
       const hubs = await request(
@@ -260,10 +324,11 @@ export function startCloud(engine, config, onStatus = () => {}) {
       lastError = e.message;
       onStatus({ connected: false, message: e.message });
     } finally {
-      if (!stopped) timer = setTimeout(() => locked(tick), 2000);
+      syncing = false;
+      if (!stopped) timer = setTimeout(tick, 2000);
     }
   }
-  locked(tick);
+  void tick();
   return {
     stop() {
       stopped = true;
@@ -272,29 +337,28 @@ export function startCloud(engine, config, onStatus = () => {}) {
     submit(command, actor) {
       const enriched = enrichCommand(command);
       const who = desktopActor(actor);
-      return locked(async () => {
+      return (async () => {
         if (stopped) throw Error("Cloud sync is stopping");
-        try {
-          await insertEvent(enriched, who);
-          await pullApply(enriched.id);
-          const result = engine.resultOf(enriched.id);
-          if (!result)
-            throw Error(
-              lastError ||
-                "This order changed on another computer. Refresh and try again.",
-            );
-          await publishSnapshot();
-          onStatus({
-            connected: true,
-            message: "Cloud connected",
-            lastSync: new Date().toISOString(),
-          });
-          return result;
-        } catch (e) {
-          onStatus({ connected: false, message: e.message });
-          throw e;
-        }
-      });
+        await ensureBootstrap();
+        await insertEvent(enriched, who);
+        await pullApply(enriched.id);
+        const failed = failures.get(enriched.id);
+        failures.delete(enriched.id);
+        if (failed) throw failed;
+        const result = engine.resultOf(enriched.id);
+        if (!result)
+          throw Error(
+            lastError ||
+              "This order changed on another computer. Refresh and try again.",
+          );
+        await publishSnapshot();
+        onStatus({
+          connected: true,
+          message: "Cloud connected",
+          lastSync: new Date().toISOString(),
+        });
+        return result;
+      })();
     },
   };
 }

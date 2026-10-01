@@ -34,9 +34,14 @@ html.native #root {
   inset: 0;
   width: 100%;
   height: 100%;
+  height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
   touch-action: manipulation;
+}
+html.native #root {
+  display: flex;
+  flex-direction: column;
 }
 button,
 input,
@@ -151,7 +156,8 @@ button svg {
   min-height: 100vh;
 }
 html.native .app {
-  height: 100%;
+  flex: 1 1 auto;
+  height: auto;
   min-height: 0;
   overflow: hidden;
 }
@@ -1195,10 +1201,13 @@ form footer {
   padding: 25px;
 }
 html.native .connect-page {
-  height: 100%;
+  position: relative;
+  flex: 1 1 auto;
+  height: auto;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 .connect-card {
   width: 460px;

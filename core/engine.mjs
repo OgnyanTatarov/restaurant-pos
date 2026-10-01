@@ -969,13 +969,24 @@ export class Engine {
           break;
         }
         case "order.printBill": {
-          const o = order();
+          const o = s.orders.find((o) => o.id === p.orderId);
+          if (!o) fail("Order not found", 404);
+          if (!["open", "paid"].includes(o.status))
+            fail("Order is already closed", 409);
+          if (o.status === "open" && p.version !== o.version)
+            fail(
+              "This order changed on another device. Refresh and try again.",
+              409,
+            );
           const items = o.items.filter((i) => !i.voided);
           if (!items.length) fail("Add items before printing a bill");
           const printerId =
             typeof p.printerId === "string"
               ? p.printerId.trim().slice(0, 80)
               : "";
+          const methods = [
+            ...new Set((o.payments || []).map((pay) => pay.payment)),
+          ];
           s.jobs.push({
             id: p.jobId ? text(p.jobId, "job", 80) : jobKey(id, "bill", "BILL"),
             orderId: o.id,
@@ -985,10 +996,12 @@ export class Engine {
             items: structuredClone(items),
             status: printJobs ? "queued" : "remote",
             createdAt: now,
+            placedAt: o.createdAt,
             attempts: 0,
             error: "",
             actor: actor.name,
             printerId,
+            payment: methods.length === 1 ? methods[0] : methods.length ? "split" : "",
             amount: unpaidTotal(o),
             total: total(o),
           });

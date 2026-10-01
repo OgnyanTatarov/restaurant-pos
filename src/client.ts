@@ -27,14 +27,37 @@ export const emptyConnection: Connection = {
   key: cloudProject.key,
   restaurantId: cloudProject.restaurantId,
 };
-export let connection: Connection =
-  JSON.parse(localStorage.getItem("pos.connection") || "null") ||
-  emptyConnection;
+function loadJson(key: string) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || "null");
+  } catch {
+    return null;
+  }
+}
+export let connection: Connection = loadJson("pos.connection") || emptyConnection;
+// A saved Wi-Fi hub address hangs the phone away from the restaurant. The
+// phone always uses the baked-in project and keeps the cached floor and session.
+if (!desktop) {
+  const baked: Connection = { ...emptyConnection };
+  const sameCloud =
+    connection.mode === "cloud" &&
+    String(connection.url || "").replace(/\/$/, "") === baked.url &&
+    connection.key === baked.key &&
+    connection.restaurantId === baked.restaurantId;
+  if (!sameCloud) {
+    connection = baked;
+    try {
+      localStorage.setItem("pos.connection", JSON.stringify(connection));
+    } catch {
+      /* session and cached floor still open the till */
+    }
+  }
+}
 let accessToken = "",
   refreshToken = "",
   expiresAt = 0;
 try {
-  const saved = JSON.parse(localStorage.getItem("pos.session") || "null");
+  const saved = loadJson("pos.session");
   if (saved?.refresh) {
     accessToken = saved.access || "";
     refreshToken = saved.refresh;
@@ -105,6 +128,25 @@ export async function ipc(name: string, ...args: any[]) {
   if (!r.ok) throw Error(r.error);
   return r.data;
 }
+function withTimeout<T>(work: Promise<T>, timeout: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const e = new Error("Network timeout");
+      (e as any).timeout = true;
+      reject(e);
+    }, timeout);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 async function request(
   url: string,
   method = "GET",
@@ -113,28 +155,34 @@ async function request(
   timeout = 12000,
 ) {
   const all = { "Content-Type": "application/json", ...headers };
-  let status: number, body: any;
-  if (Capacitor.isNativePlatform()) {
-    const r = await CapacitorHttp.request({
-      url,
-      method,
-      headers: all,
-      data,
-      connectTimeout: timeout,
-      readTimeout: timeout,
-    });
-    status = r.status;
-    body = r.data;
-  } else {
-    const r = await fetch(url, {
-      method,
-      headers: all,
-      body: data === undefined ? undefined : JSON.stringify(data),
-      signal: AbortSignal.timeout(timeout),
-    });
-    status = r.status;
-    body = await r.json();
-  }
+  const { status, body } = await withTimeout(
+    (async () => {
+      let status: number, body: any;
+      if (Capacitor.isNativePlatform()) {
+        const r = await CapacitorHttp.request({
+          url,
+          method,
+          headers: all,
+          data,
+          connectTimeout: timeout,
+          readTimeout: timeout,
+        });
+        status = r.status;
+        body = r.data;
+      } else {
+        const r = await fetch(url, {
+          method,
+          headers: all,
+          body: data === undefined ? undefined : JSON.stringify(data),
+          signal: AbortSignal.timeout(timeout),
+        });
+        status = r.status;
+        body = await r.json();
+      }
+      return { status, body };
+    })(),
+    timeout,
+  );
   if (!status || status >= 400) {
     const e = new Error(
       body?.error_description ||
@@ -151,24 +199,33 @@ export function signedIn() {
   return !!refreshToken;
 }
 export async function login(email: string, password: string) {
+  const target = cloudTarget();
   const d = await request(
-    connection.url + "/auth/v1/token?grant_type=password",
+    target.url + "/auth/v1/token?grant_type=password",
     "POST",
     { email, password },
-    { apikey: connection.key },
+    { apikey: target.key },
   );
   saveSession(d);
 }
 async function authHeaders(target = cloudTarget()) {
   if (!refreshToken) throw new SignInRequired();
   if (!accessToken || Date.now() > expiresAt - 60000) {
-    const d = await request(
-      target.url + "/auth/v1/token?grant_type=refresh_token",
-      "POST",
-      { refresh_token: refreshToken },
-      { apikey: target.key },
-    );
-    saveSession(d);
+    try {
+      const d = await request(
+        target.url + "/auth/v1/token?grant_type=refresh_token",
+        "POST",
+        { refresh_token: refreshToken },
+        { apikey: target.key },
+      );
+      saveSession(d);
+    } catch (e) {
+      if ((e as any).status === 400 || (e as any).status === 401) {
+        clearSession();
+        throw new SignInRequired();
+      }
+      throw e;
+    }
   }
   return { apikey: target.key, Authorization: `Bearer ${accessToken}` };
 }
@@ -216,19 +273,27 @@ async function readCloud() {
     },
   };
 }
-const unreachable = (e: any) => !e?.status;
-export async function getState(): Promise<{
+const unreachable = (e: any) => !e?.status || !!e?.timeout;
+let lanDown = false;
+type LoadedState = {
   state: State;
   actor: Actor;
   printers: PrinterAssignments;
-}> {
+};
+async function loadState(): Promise<LoadedState> {
   let result;
   if (desktop) result = await ipc("state");
-  else if (connection.mode === "lan" && connection.url) {
+  else if (
+    connection.mode === "lan" &&
+    connection.url &&
+    connection.token &&
+    !lanDown
+  ) {
     try {
       result = await readLan();
     } catch (e) {
       if (!unreachable(e)) throw e;
+      lanDown = true;
       result = await readCloud();
     }
   } else result = await readCloud();
@@ -240,19 +305,21 @@ export async function getState(): Promise<{
   if (!desktop) localStorage.setItem("pos.cache", JSON.stringify(next));
   return next;
 }
-export function cached(): { state: State; actor: Actor } | null {
-  try {
-    return JSON.parse(localStorage.getItem("pos.cache") || "null");
-  } catch {
-    return null;
+let stateRequest: Promise<LoadedState> | null = null;
+export function getState() {
+  if (desktop) return loadState();
+  if (!stateRequest) {
+    stateRequest = loadState().finally(() => {
+      stateRequest = null;
+    });
   }
+  return stateRequest;
+}
+export function cached(): { state: State; actor: Actor } | null {
+  return loadJson("pos.cache");
 }
 export function pending(): Command | null {
-  try {
-    return JSON.parse(localStorage.getItem("pos.pending") || "null");
-  } catch {
-    return null;
-  }
+  return loadJson("pos.pending");
 }
 export async function submit(
   type: string,
@@ -302,7 +369,12 @@ export async function submit(
           "The restaurant till is offline. The order is saved and can be retried when that computer is back online.",
         );
       };
-      if (connection.mode === "lan" && connection.url) {
+      if (
+        connection.mode === "lan" &&
+        connection.url &&
+        connection.token &&
+        !lanDown
+      ) {
         try {
           result = await request(
             connection.url + "/api/command",
@@ -313,6 +385,7 @@ export async function submit(
           );
         } catch (e) {
           if (!unreachable(e)) throw e;
+          lanDown = true;
           result = await sendCloud();
         }
       } else result = await sendCloud();

@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine, total, unpaidTotal, unitAmount } from "../core/engine.mjs";
-import { ticketHtml, billHtml, ticketSizes, paperMm } from "../desktop/ticket.mjs";
+import { ticketHtml, billHtml, billStatus, ticketSizes, paperMm } from "../desktop/ticket.mjs";
 import { normalizePrinters, deviceForJob } from "../desktop/printers.mjs";
 import { createHub } from "../desktop/hub.mjs";
 import { parseUpdateFeed } from "../desktop/updater.cjs";
@@ -748,14 +748,27 @@ test("order.printBill queues a guest bill for a named printer", () => {
   assert.equal(job.kind, "BILL");
   assert.equal(job.printerId, "upstairs");
   const html = billHtml(job, { ...e.state.settings, paperWidth: 80 });
-  assert.ok(html.includes("BILL"));
-  assert.ok(html.includes("GBP"));
-  assert.ok(html.includes("Total"));
+  assert.ok(html.includes('class="logo"'));
+  assert.ok(html.includes("data:image/png;base64,"));
+  assert.ok(html.includes("SUB TOTAL"));
+  assert.ok(html.includes("TOTAL"));
+  assert.ok(html.includes("NOT PAID"));
+  assert.ok(html.includes(`Table: ${e.state.orders[0].tableName}`));
+  assert.ok(!html.includes("Desktop manager"));
   assert.ok(html.includes("width:80mm"));
-  assert.ok(html.includes("padding:2mm 12mm 2mm 2mm"));
-  assert.ok(html.includes('class="price"'));
-  assert.ok(html.includes("white-space:nowrap"));
-  assert.ok(!html.includes("class=\"row\""));
+  assert.equal(billStatus(job), "NOT PAID");
+  const line = e.state.orders[0].items[0];
+  change(e, id, "order.payShare", {
+    payment: "cash",
+    items: [{ itemId: line.id, qty: line.qty }],
+  });
+  change(e, id, "order.printBill", { printerId: "upstairs" });
+  const paidJob = e.state.jobs.filter((j) => j.station === "bill").at(-1);
+  assert.equal(paidJob.payment, "cash");
+  assert.equal(billStatus(paidJob), "CASH");
+  assert.ok(billHtml(paidJob, e.state.settings).includes(">CASH<"));
+  assert.equal(billStatus({ ...paidJob, payment: "card" }), "CARD");
+  assert.equal(billStatus({ ...paidJob, payment: "split" }), "SPLIT");
   assert.equal(paperMm({ paperWidth: 80 }), 80);
   assert.equal(paperMm({}), 80);
   e.execute(

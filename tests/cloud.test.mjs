@@ -52,7 +52,22 @@ test("cloud bridge claims hub, checks membership, processes once and publishes r
   let cloud;
   try {
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(Error("Bridge timeout")), 3000);
+      const timeout = setTimeout(() => reject(Error("Bridge timeout")), 4000);
+      let settled = false;
+      const finish = (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        clearInterval(poll);
+        err ? reject(err) : resolve();
+      };
+      const poll = setInterval(() => {
+        const acked = calls.some(
+          (c) =>
+            c.url.includes("pos_commands") && c.options.method === "PATCH",
+        );
+        if (engine.state.orders.length === 1 && acked) finish();
+      }, 20);
       cloud = startCloud(
         engine,
         {
@@ -61,13 +76,7 @@ test("cloud bridge claims hub, checks membership, processes once and publishes r
           restaurantId,
         },
         (status) => {
-          if (status.connected) {
-            clearTimeout(timeout);
-            resolve();
-          } else {
-            clearTimeout(timeout);
-            reject(Error(status.message));
-          }
+          if (!status.connected) finish(Error(status.message));
         },
       );
     });
@@ -205,6 +214,132 @@ test("two hubs apply the same event log and only the origin queues tickets", asy
       0,
     );
   } finally {
+    cloudA?.stop();
+    cloudB?.stop();
+    globalThis.fetch = original;
+    a.close();
+    b.close();
+  }
+});
+test("a waiting phone command does not stop the other till from syncing", async () => {
+  const a = new Engine(),
+    b = new Engine();
+  a.execute({ id: randomUUID(), type: "demo.load" });
+  b.adoptSnapshot(a.snapshot());
+  const restaurantId = randomUUID();
+  const events = [];
+  let releasePhone = () => {};
+  let holdPhone = false;
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const method = options.method || "GET";
+    let body = null;
+    if (url.includes("pos_events") && method === "GET") {
+      const after = Number((url.match(/seq=gt\.(\d+)/) || [])[1] || 0);
+      body = events.filter((e) => e.seq > after);
+    } else if (url.includes("pos_events") && method === "POST") {
+      const row = JSON.parse(options.body);
+      if (holdPhone && row.hub_id === a.state.hubId)
+        await new Promise((resolve) => {
+          releasePhone = resolve;
+        });
+      if (!events.some((e) => e.id === row.id))
+        events.push({ ...row, seq: events.length + 1 });
+      body = null;
+    } else if (url.includes("pos_snapshots") && method === "GET") body = [];
+    else if (url.includes("pos_commands")) body = [];
+    else if (url.includes("pos_hubs"))
+      body = [{ hub_id: a.state.hubId }, { hub_id: b.state.hubId }];
+    return new Response(body == null ? null : JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  let cloudA, cloudB;
+  const waitFor = async (fn) => {
+    const start = Date.now();
+    while (!fn()) {
+      if (Date.now() - start > 6000) throw Error("Timed out waiting for sync");
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+  let pending = Promise.resolve();
+  try {
+    await new Promise((resolve, reject) => {
+      let ready = 0;
+      const timeout = setTimeout(() => reject(Error("Bridge timeout")), 4000);
+      const status = () => {
+        ready += 1;
+        if (ready < 2) return;
+        clearTimeout(timeout);
+        resolve();
+      };
+      cloudA = startCloud(
+        a,
+        {
+          url: "https://example.invalid",
+          serviceRoleKey: "test-key",
+          restaurantId,
+        },
+        (s) => {
+          if (s.connected) status();
+          else reject(Error(s.message));
+        },
+      );
+      cloudB = startCloud(
+        b,
+        {
+          url: "https://example.invalid",
+          serviceRoleKey: "test-key",
+          restaurantId,
+        },
+        (s) => {
+          if (s.connected) status();
+          else reject(Error(s.message));
+        },
+      );
+    });
+    holdPhone = true;
+    let phoneSettled = false;
+    pending = cloudA
+      .submit(
+        {
+          id: randomUUID(),
+          type: "order.open",
+          payload: { tableId: a.state.tables[0].id },
+        },
+        { id: "phone", name: "Phone", role: "waiter" },
+      )
+      .then((result) => {
+        phoneSettled = true;
+        return result;
+      });
+    const orderId = randomUUID();
+    await cloudB.submit(
+      {
+        id: randomUUID(),
+        type: "order.open",
+        payload: { tableId: a.state.tables[1].id, orderId },
+      },
+      { id: b.state.hubId, name: "B", role: "manager" },
+    );
+    await waitFor(() => a.state.orders.some((o) => o.id === orderId));
+    assert.equal(phoneSettled, false);
+    assert.equal(
+      b.state.orders.some((o) => o.id === orderId),
+      true,
+    );
+    holdPhone = false;
+    releasePhone();
+    await pending;
+    assert.equal(phoneSettled, true);
+    await waitFor(() =>
+      b.state.orders.some((o) => o.tableId === a.state.tables[0].id),
+    );
+  } finally {
+    holdPhone = false;
+    releasePhone();
+    await pending.catch(() => {});
     cloudA?.stop();
     cloudB?.stop();
     globalThis.fetch = original;
