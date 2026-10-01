@@ -42,6 +42,9 @@ export function ticketLines(item) {
   return lines;
 }
 export function ticketSizes(settings, station) {
+  if (station === "bill") {
+    return { body: 14, title: 14, heading: 14, item: 14, meta: 14, cook: 14 };
+  }
   const base = Math.min(36, Math.max(10, Number(settings.ticketFont) || 20));
   const kitchen = station === "kitchen";
   const body = kitchen ? Math.round(base * 1.5) : base;

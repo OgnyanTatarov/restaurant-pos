@@ -1086,6 +1086,13 @@ main {
 .settings-row strong {
   font-weight: 500;
 }
+.analytics-category {
+  margin-top: 8px;
+}
+.analytics-category h3 {
+  margin: 16px 0 0;
+  font-size: 1rem;
+}
 .address {
   display: block;
   overflow-wrap: anywhere;

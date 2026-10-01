@@ -475,6 +475,24 @@ function App() {
       />,
     );
   }
+  function editPrice(m: MenuItem) {
+    setModal(
+      <PriceForm
+        item={m}
+        onClose={() => setModal(null)}
+        onSave={async (price) => {
+          if (
+            await act(
+              "menu.save",
+              { id: m.id, price },
+              "Price updated",
+            )
+          )
+            setModal(null);
+        }}
+      />,
+    );
+  }
   function editCategory(c?: Category) {
     setModal(
       <CategoryForm
@@ -1442,12 +1460,10 @@ function App() {
                         {collapsedCats.length ? "Expand all" : "Collapse all"}
                       </button>
                     )}
-                    {manager && (
-                      <button className="primary" onClick={() => editMenu()}>
-                        <Plus size={18} />
-                        Add menu item
-                      </button>
-                    )}
+                    <button className="primary" onClick={() => editMenu()}>
+                      <Plus size={18} />
+                      Add menu item
+                    </button>
                   </div>
                 </div>
                 <div className="panel">
@@ -1522,7 +1538,7 @@ function App() {
                                   <span>
                                     {m.available ? "Available" : "Hidden"}
                                   </span>
-                                  {manager && (
+                                  {manager ? (
                                     <>
                                       <button onClick={() => editMenu(m)}>
                                         Edit
@@ -1542,6 +1558,10 @@ function App() {
                                         <Trash2 size={17} />
                                       </button>
                                     </>
+                                  ) : (
+                                    <button onClick={() => editPrice(m)}>
+                                      Price
+                                    </button>
                                   )}
                                 </div>
                               </div>
@@ -1908,6 +1928,8 @@ function App() {
             {page === "analytics" && manager && (
               <Analytics
                 orders={history.filter((o) => o.status === "paid")}
+                menu={s.menu}
+                categories={s.categories}
                 money={money}
               />
             )}
@@ -2421,6 +2443,48 @@ function CategoryForm({
             Cancel
           </button>
           <button className="primary">Save category</button>
+        </footer>
+      </form>
+    </Modal>
+  );
+}
+function PriceForm({
+  item,
+  onClose,
+  onSave,
+}: {
+  item: MenuItem;
+  onClose: () => void;
+  onSave: (price: number) => Promise<void>;
+}) {
+  const [price, setPrice] = useState((item.price / 100).toFixed(2));
+  return (
+    <Modal title={item.name} onClose={onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const cents = Math.round(Number(price) * 100);
+          if (!Number.isSafeInteger(cents) || cents < 0) return;
+          onSave(cents);
+        }}
+      >
+        <label>
+          Price
+          <input
+            autoFocus
+            required
+            type="number"
+            min="0"
+            step="0.01"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+          />
+        </label>
+        <footer>
+          <button type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary">Save price</button>
         </footer>
       </form>
     </Modal>
@@ -3466,49 +3530,88 @@ function PinGate({
 }
 function Analytics({
   orders,
+  menu,
+  categories,
   money,
 }: {
   orders: Order[];
+  menu: MenuItem[];
+  categories: Category[];
   money: (v: number) => string;
 }) {
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  const [day, setDay] = useState<string | null>(null);
+  const selected = day || todayKey();
+  const [y, m, d] = selected.split("-").map(Number);
+  const startOfDay = new Date(y, m - 1, d);
+  const endOfDay = new Date(y, m - 1, d + 1);
   const startOfWeek = new Date(startOfDay);
   const weekday = startOfWeek.getDay();
   startOfWeek.setDate(startOfWeek.getDate() - (weekday === 0 ? 6 : weekday - 1));
-  const today = orders.filter(
-    (o) => o.closedAt && new Date(o.closedAt) >= startOfDay,
-  );
-  const week = orders.filter(
-    (o) => o.closedAt && new Date(o.closedAt) >= startOfWeek,
-  );
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(endOfWeek.getDate() + 7);
+  const weekStartKey = dayKey(startOfWeek.toISOString());
+  const weekEnd = new Date(endOfWeek);
+  weekEnd.setDate(weekEnd.getDate() - 1);
+  const currentWeek =
+    todayKey() >= weekStartKey && todayKey() <= dayKey(weekEnd.toISOString());
+  const weekName = currentWeek
+    ? "this week"
+    : `${formatDay(weekStartKey)} – ${formatDay(dayKey(weekEnd.toISOString()))}`;
+  const dayName = selected === todayKey() ? "today" : formatDay(selected);
+  const inRange = (o: Order, from: Date, to: Date) => {
+    if (!o.closedAt) return false;
+    const t = new Date(o.closedAt);
+    return t >= from && t < to;
+  };
+  const today = orders.filter((o) => inRange(o, startOfDay, endOfDay));
+  const week = orders.filter((o) => inRange(o, startOfWeek, endOfWeek));
   const weekTotal = week.reduce((n, o) => n + (o.paidTotal || 0), 0);
   const todayTotal = today.reduce((n, o) => n + (o.paidTotal || 0), 0);
-  const dishes = new Map<string, { qty: number; total: number }>();
+  const dishes = new Map<string, Map<string, { qty: number; total: number }>>();
   for (const order of week) {
     for (const item of order.items.filter((i) => !i.voided)) {
-      const row = dishes.get(item.name) || { qty: 0, total: 0 };
+      const category =
+        menu.find((m) => m.id === item.menuId)?.category || "Other";
+      const rows = dishes.get(category) || new Map();
+      const row = rows.get(item.name) || { qty: 0, total: 0 };
       row.qty += item.qty;
       row.total += lineAmount(item);
-      dishes.set(item.name, row);
+      rows.set(item.name, row);
+      dishes.set(category, rows);
     }
   }
-  const top = [...dishes.entries()]
-    .sort((a, b) => b[1].qty - a[1].qty || b[1].total - a[1].total)
-    .slice(0, 8);
+  const categoryOrder = [
+    ...categories.filter((c) => !c.deleted).map((c) => c.name),
+    ...categories.filter((c) => c.deleted).map((c) => c.name),
+  ];
+  const grouped = [
+    ...categoryOrder.filter((name) => dishes.has(name)),
+    ...[...dishes.keys()]
+      .filter((name) => !categoryOrder.includes(name))
+      .sort(),
+  ].map((name) => ({
+    name,
+    items: [...dishes.get(name)!.entries()].sort(
+      (a, b) => b[1].qty - a[1].qty || b[1].total - a[1].total,
+    ),
+  }));
   return (
     <>
+      <div className="section-toolbar">
+        <h2>Analytics</h2>
+        <DayNav day={day} onChange={setDay} />
+      </div>
       <div className="stats">
         <div>
-          <span>Paid today</span>
+          <span>Paid {dayName}</span>
           <strong>{money(todayTotal)}</strong>
         </div>
         <div>
-          <span>Paid this week</span>
+          <span>Paid {weekName}</span>
           <strong>{money(weekTotal)}</strong>
         </div>
         <div>
-          <span>Orders this week</span>
+          <span>Orders {weekName}</span>
           <strong>{week.length}</strong>
         </div>
         <div>
@@ -3517,19 +3620,22 @@ function Analytics({
         </div>
       </div>
       <section className="panel padded">
-        <h2>Top dishes this week</h2>
-        {!top.length && (
-          <p className="muted">Paid orders this week will appear here.</p>
+        <h2>Most sold {weekName}</h2>
+        {!grouped.length && (
+          <p className="muted">No paid orders {weekName}.</p>
         )}
-        {top.map(([name, row]) => (
-          <div className="settings-row" key={name}>
-            <div>
-              <strong>{name}</strong>
-              <small>
-                {row.qty} sold
-              </small>
-            </div>
-            <strong>{money(row.total)}</strong>
+        {grouped.map((group) => (
+          <div className="analytics-category" key={group.name}>
+            <h3>{group.name}</h3>
+            {group.items.map(([name, row]) => (
+              <div className="settings-row" key={name}>
+                <div>
+                  <strong>{name}</strong>
+                  <small>{row.qty} sold</small>
+                </div>
+                <strong>{money(row.total)}</strong>
+              </div>
+            ))}
           </div>
         ))}
       </section>

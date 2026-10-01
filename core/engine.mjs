@@ -410,7 +410,6 @@ export class Engine {
     if (
       actor.role !== "manager" &&
       [
-        "menu.save",
         "menu.delete",
         "category.save",
         "category.delete",
@@ -713,6 +712,10 @@ export class Engine {
           const existing = s.menu.find((m) => m.id === p.id && !m.deleted);
           if (p.id && !existing && s.menu.some((m) => m.id === p.id))
             fail("Menu item not found");
+          if (actor.role !== "manager" && existing) {
+            existing.price = integer(p.price, "price");
+            break;
+          }
           if (!["kitchen", "bar"].includes(p.station))
             fail("Choose kitchen or bar");
           const category = text(p.category, "category");

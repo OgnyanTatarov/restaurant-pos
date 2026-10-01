@@ -151,6 +151,43 @@ test("waiter cannot edit configuration, delete sent items or cancel whole orders
   );
   e.close();
 });
+test("a waiter can add a menu item and change only its price", () => {
+  const e = setup();
+  const waiter = { id: "waiter", name: "Waiter", role: "waiter" };
+  const category = e.state.categories.find((c) => !c.deleted).name;
+  e.execute(
+    command("menu.save", {
+      name: "Soup",
+      category,
+      price: 450,
+      station: "kitchen",
+      available: true,
+    }),
+    waiter,
+  );
+  const item = e.state.menu.find((m) => m.name === "Soup");
+  e.execute(
+    command("menu.save", {
+      id: item.id,
+      name: "Renamed",
+      category: "Nope",
+      price: 500,
+      station: "bar",
+      available: false,
+    }),
+    waiter,
+  );
+  assert.equal(item.name, "Soup");
+  assert.equal(item.category, category);
+  assert.equal(item.station, "kitchen");
+  assert.equal(item.available, true);
+  assert.equal(item.price, 500);
+  assert.throws(
+    () => e.execute(command("menu.delete", { id: item.id }), waiter),
+    /Manager/,
+  );
+  e.close();
+});
 test("categories are required for menu items and can be renamed", () => {
   const e = new Engine();
   assert.throws(
@@ -777,6 +814,8 @@ test("kitchen tickets use a larger type size than bar tickets", () => {
   );
   assert.equal(ticketSizes(settings, "kitchen").body, 30);
   assert.equal(ticketSizes(settings, "bar").body, 20);
+  assert.equal(ticketSizes(settings, "bill").body, 14);
+  assert.equal(ticketSizes(settings, "bill").item, 14);
   assert.ok(kitchen.includes("font:30px"));
   assert.ok(bar.includes("font:20px"));
   assert.ok(kitchen.includes('class="cook"'));
@@ -807,6 +846,7 @@ test("order.printBill queues a guest bill for a named printer", () => {
   assert.ok(html.includes(`Table: ${e.state.orders[0].tableName}`));
   assert.ok(!html.includes("Desktop manager"));
   assert.ok(html.includes("width:80mm"));
+  assert.ok(html.includes("font:14px"));
   assert.equal(billStatus(job), "NOT PAID");
   const line = e.state.orders[0].items[0];
   change(e, id, "order.payShare", {
