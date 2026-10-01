@@ -752,8 +752,10 @@ test("order.printBill queues a guest bill for a named printer", () => {
   assert.ok(html.includes("GBP"));
   assert.ok(html.includes("Total"));
   assert.ok(html.includes("width:80mm"));
+  assert.ok(html.includes("padding:2mm 12mm 2mm 2mm"));
   assert.ok(html.includes('class="price"'));
   assert.ok(html.includes("white-space:nowrap"));
+  assert.ok(!html.includes("class=\"row\""));
   assert.equal(paperMm({ paperWidth: 80 }), 80);
   assert.equal(paperMm({}), 80);
   e.execute(

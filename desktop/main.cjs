@@ -218,7 +218,8 @@ if (!app.requestSingleInstanceLock()) {
                 silent: true,
                 deviceName,
                 printBackground: false,
-                margins: { marginType: "none" },
+                margins: { marginType: "printableArea" },
+                scaleFactor: 100,
                 pageSize: { width: paper * 1000, height: 1000000 },
               },
               (ok, reason) =>
