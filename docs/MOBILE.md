@@ -36,7 +36,7 @@ For local HTTP connections, the included Info.plist has a local-network purpose 
 
 ## First connection
 
-Start the Windows app. Settings displays its IP address and allows manager/waiter pairing. On the phone choose local Wi-Fi and enter the address/token. To use Supabase instead, follow SUPABASE.md.
+Start the Windows app and leave it running; it prints tickets even when you are not in the building. On the phone choose **Supabase (internet)**, sign in, and the till opens from any network. The phone remembers that sign-in. Restaurant Wi-Fi pairing is still available when you are on the same network as the Windows computer. Follow SUPABASE.md for the staff login.
 
 Local pairing tokens are stored in the application's local storage. Treat staff devices as access credentials, use device screen locks, and revoke lost devices from the desktop. Cloud session tokens are kept only in memory and require a fresh login after an app restart.
 

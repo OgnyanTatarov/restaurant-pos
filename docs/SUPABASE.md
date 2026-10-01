@@ -56,7 +56,11 @@ Keep each computer's SQLite file. A brand-new empty database on a second PC is e
 
 ## 4. Connect a phone through the internet
 
-In the phone app choose **Supabase (internet)**. Enter:
+The phone works away from the restaurant. Choose **Supabase (internet)** and sign in. The app remembers the session, so the next time you are off the restaurant Wi-Fi it opens the till over the internet instead of freezing on the local hub address. If the phone was paired only to Wi-Fi, it asks you to sign in as soon as that hub cannot be reached.
+
+The Windows computer at the restaurant must stay on and online. It prints the tickets and applies the orders. The phone reads and sends them through Supabase.
+
+In the phone app choose **Supabase (internet)**. The project address is already filled in. Enter:
 
 - Project URL: `https://nebpmyoglgmaztexbchl.supabase.co`
 - Public anon key: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5lYnBteW9nbGdtYXp0ZXhiY2hsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4MTM1OTcsImV4cCI6MjEwNTM4OTU5N30.SZ0AMht0MDPhNjrbx-ZH8yt8jTC4_ck1LAzA0TL4xn4`
@@ -65,7 +69,7 @@ In the phone app choose **Supabase (internet)**. Enter:
 - Restaurant UUID: `2fa67e09-df28-4be7-a90d-03dab6436936`
 - The staff user's email and password.
 
-Access/refresh tokens stay in memory; after restarting the mobile app, sign in again using Settings. Public project configuration is retained. The desktop processes submitted commands and uploads the updated state. Two-second polling is used; Supabase Realtime configuration is not required.
+The phone keeps the sign-in on the device, so you do not enter the password every time the app opens. The desktop processes submitted commands and uploads the updated state. Two-second polling is used; Supabase Realtime configuration is not required.
 
 ## 5. Check failure recovery
 

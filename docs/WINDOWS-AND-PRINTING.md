@@ -41,7 +41,7 @@ Use a trusted manager Windows account. The installed app opens full screen and c
 3. Install every other printer in Windows too, whether it connects by USB or network.
 4. In the app's Settings, add each printer and give it a name such as Upstairs or Downstairs.
 5. Assign those named printers to kitchen tickets, bar tickets and bills. Save before sending tests.
-6. Set 58 mm or 80 mm paper width and check the driver's paper width, margins and cutter settings.
+6. Set 80 mm or 58 mm paper width to match the roll, and check the driver's paper width, margins and cutter settings. Bills keep the price on the page instead of running off the right edge.
 7. Print kitchen, bar and bill tests. Inspect wrapping, long notes and Bulgarian characters. Kitchen tickets print larger than the ticket text size so cooks can read them.
 
 The app uses Electron's Windows print API with the exact system device name and silent printing. It does not assume ESC/POS compatibility, Bluetooth support or a particular printer model. Two jobs can be assigned to the same printer for testing. Phones print bills through the Windows hub and can choose a named printer when more than one is configured.
@@ -57,7 +57,7 @@ An order creates one ticket per destination containing only the newly sent lines
 - `uncertain`: the app restarted during submission. Check whether it already printed.
 - `resolved`: manager recorded that a failed/uncertain original was handled.
 
-Reprints create a new ticket marked REPRINT. An error is never automatically retried because the printer may have received the original before a connection failure. Resolve the original once its outcome is known. This avoids hidden duplicate food preparation.
+Reprints send the same kitchen slip again. The paper shows KITCHEN, the table, the time, and the items. It does not show the ticket ID, who sent it, or whether it is a reprint. An error is never automatically retried because the printer may have received the original before a connection failure. Resolve the original once its outcome is known. This avoids hidden duplicate food preparation.
 
 ## Local network
 

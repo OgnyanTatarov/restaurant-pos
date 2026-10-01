@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine, total, unpaidTotal, unitAmount } from "../core/engine.mjs";
-import { ticketHtml, billHtml, ticketSizes } from "../desktop/ticket.mjs";
+import { ticketHtml, billHtml, ticketSizes, paperMm } from "../desktop/ticket.mjs";
 import { normalizePrinters, deviceForJob } from "../desktop/printers.mjs";
 import { createHub } from "../desktop/hub.mjs";
 import { parseUpdateFeed } from "../desktop/updater.cjs";
@@ -698,12 +698,12 @@ test("kitchen tickets use a larger type size than bar tickets", () => {
   };
   const kitchen = ticketHtml(
     {
-      id: "1",
+      id: "1806cd27-afe8-42cb-a7b9-d05de6ce6a3d",
       station: "kitchen",
-      kind: "NEW",
+      kind: "REPRINT NEW",
       tableName: "T1",
       createdAt: new Date().toISOString(),
-      actor: "A",
+      actor: "Desktop manager",
       items: [
         {
           qty: 1,
@@ -731,6 +731,12 @@ test("kitchen tickets use a larger type size than bar tickets", () => {
   assert.ok(kitchen.includes("font:30px"));
   assert.ok(bar.includes("font:20px"));
   assert.ok(kitchen.includes('class="cook"'));
+  assert.ok(kitchen.includes(">KITCHEN</h1>"));
+  assert.ok(!kitchen.includes("REPRINT"));
+  assert.ok(!kitchen.includes("Ticket"));
+  assert.ok(!kitchen.includes("Desktop manager"));
+  assert.ok(bar.includes("BAR · NEW"));
+  assert.ok(bar.includes("Ticket 2"));
 });
 test("order.printBill queues a guest bill for a named printer", () => {
   const e = setup(),
@@ -741,10 +747,15 @@ test("order.printBill queues a guest bill for a named printer", () => {
   const job = e.state.jobs.find((j) => j.station === "bill");
   assert.equal(job.kind, "BILL");
   assert.equal(job.printerId, "upstairs");
-  const html = billHtml(job, e.state.settings);
+  const html = billHtml(job, { ...e.state.settings, paperWidth: 80 });
   assert.ok(html.includes("BILL"));
   assert.ok(html.includes("GBP"));
   assert.ok(html.includes("Total"));
+  assert.ok(html.includes("width:80mm"));
+  assert.ok(html.includes('class="price"'));
+  assert.ok(html.includes("white-space:nowrap"));
+  assert.equal(paperMm({ paperWidth: 80 }), 80);
+  assert.equal(paperMm({}), 80);
   e.execute(
     command("settings.save", {
       settings: { ...e.state.settings, ticketFont: 36 },

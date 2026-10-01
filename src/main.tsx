@@ -41,6 +41,8 @@ import {
   pending,
   login,
   emptyPrinters,
+  cloudProject,
+  signedIn,
 } from "./client";
 import type {
   State,
@@ -207,7 +209,12 @@ function App() {
   const [busy, setBusy] = useState(false);
   const actionInFlight = useRef(false);
   const [modal, setModal] = useState<React.ReactNode>(null);
-  const [setup, setSetup] = useState(!desktop && !connection.url);
+  const [setup, setSetup] = useState(
+    !desktop && connection.mode !== "lan" && !signedIn(),
+  );
+  const [preferCloud, setPreferCloud] = useState(
+    !desktop && connection.mode !== "lan",
+  );
   const [query, setQuery] = useState("");
   const [collapsedCats, setCollapsedCats] = useState<string[]>([]);
   const [category, setCategory] = useState("All");
@@ -219,7 +226,10 @@ function App() {
   const [settingsUnlocked, setSettingsUnlocked] = useState(false);
   const [printers, setPrinters] =
     useState<PrinterAssignments>(emptyPrinters);
+  const refreshing = useRef(false);
   const refresh = useCallback(async () => {
+    if (refreshing.current) return;
+    refreshing.current = true;
     try {
       const next = await getState();
       setData((previous) =>
@@ -231,7 +241,12 @@ function App() {
       setOnline(true);
     } catch (e) {
       setOnline(false);
-      if (!data) setError((e as Error).message);
+      if ((e as any).code === "signin") {
+        setPreferCloud(true);
+        setSetup(true);
+      } else if (!data) setError((e as Error).message);
+    } finally {
+      refreshing.current = false;
     }
   }, [!!data]);
   useEffect(() => {
@@ -394,8 +409,10 @@ function App() {
   if (setup)
     return (
       <Connect
+        preferCloud={preferCloud}
         onDone={() => {
           setSetup(false);
+          setPreferCloud(false);
           setUnresolved(pending());
           setData(null);
           setError("");
@@ -529,8 +546,16 @@ function App() {
         )}
         {!online && data && !desktop && (
           <div className="banner warning">
-            Showing the last saved view. Reconnect to the desktop or cloud
-            before changing orders.
+            Showing the last saved view. Sign in to use the till from outside
+            the restaurant. The Windows computer still has to be on to print.
+            <button
+              onClick={() => {
+                setPreferCloud(true);
+                setSetup(true);
+              }}
+            >
+              Use internet
+            </button>
           </div>
         )}
         {desktop && info?.update?.state === "ready" && (
@@ -544,7 +569,10 @@ function App() {
           <div className="empty">
             <Monitor size={40} />
             <h2>Connecting to your restaurant</h2>
-            <p>The Windows app must be running to process orders.</p>
+            <p>
+              Away from the restaurant, sign in and the till stays available
+              over the internet. The Windows computer must be on to print.
+            </p>
             {!desktop && (
               <button onClick={() => setSetup(true)}>
                 Connection settings
@@ -3672,8 +3700,24 @@ function DesktopSettings({
     </>
   );
 }
-function Connect({ onDone }: { onDone: () => void }) {
-  const [c, setC] = useState<Connection>(connection);
+function Connect({
+  onDone,
+  preferCloud,
+}: {
+  onDone: () => void;
+  preferCloud?: boolean;
+}) {
+  const [c, setC] = useState<Connection>(() =>
+    preferCloud || connection.mode !== "lan" || !connection.token
+      ? {
+          ...connection,
+          mode: "cloud",
+          url: cloudProject.url,
+          key: cloudProject.key,
+          restaurantId: cloudProject.restaurantId,
+        }
+      : connection,
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -3687,8 +3731,9 @@ function Connect({ onDone }: { onDone: () => void }) {
         <span className="eyebrow">RESTAURANT POS</span>
         <h1>Join your restaurant</h1>
         <p>
-          Connect this app to the Windows hub or your configured Supabase
-          project.
+          Sign in once. After that this phone can open the till from anywhere,
+          not only on restaurant Wi-Fi. The Windows computer at the restaurant
+          still needs to be on to print tickets and bills.
         </p>
         <form
           onSubmit={async (e) => {
@@ -3718,58 +3763,53 @@ function Connect({ onDone }: { onDone: () => void }) {
             Connection
             <select
               value={c.mode}
-              onChange={(e) =>
-                setC({ ...c, mode: e.target.value as "lan" | "cloud" })
-              }
+              onChange={(e) => {
+                const mode = e.target.value as "lan" | "cloud";
+                setC(
+                  mode === "cloud"
+                    ? {
+                        ...c,
+                        mode,
+                        url: cloudProject.url,
+                        key: cloudProject.key,
+                        restaurantId: cloudProject.restaurantId,
+                      }
+                    : {
+                        ...c,
+                        mode,
+                        url: connection.mode === "lan" ? connection.url : "",
+                      },
+                );
+              }}
             >
               <option value="lan">Restaurant Wi-Fi (local hub)</option>
               <option value="cloud">Supabase (internet)</option>
             </select>
           </label>
-          <label>
-            {c.mode === "lan" ? "Windows hub address" : "Supabase project URL"}
-            <input
-              type="url"
-              required
-              placeholder={
-                c.mode === "lan"
-                  ? "http://192.168.1.20:47831"
-                  : "https://your-project.supabase.co"
-              }
-              value={c.url}
-              onChange={(e) => setC({ ...c, url: e.target.value })}
-            />
-          </label>
           {c.mode === "lan" ? (
-            <label>
-              Pairing token
-              <input
-                required
-                type="password"
-                value={c.token}
-                onChange={(e) => setC({ ...c, token: e.target.value.trim() })}
-              />
-            </label>
-          ) : (
             <>
               <label>
-                Publishable / anon key
+                Windows hub address
                 <input
+                  type="url"
                   required
-                  value={c.key}
-                  onChange={(e) => setC({ ...c, key: e.target.value.trim() })}
+                  placeholder="http://192.168.1.20:47831"
+                  value={c.url}
+                  onChange={(e) => setC({ ...c, url: e.target.value })}
                 />
               </label>
               <label>
-                Restaurant ID
+                Pairing token
                 <input
                   required
-                  value={c.restaurantId}
-                  onChange={(e) =>
-                    setC({ ...c, restaurantId: e.target.value.trim() })
-                  }
+                  type="password"
+                  value={c.token}
+                  onChange={(e) => setC({ ...c, token: e.target.value.trim() })}
                 />
               </label>
+            </>
+          ) : (
+            <>
               <label>
                 Email
                 <input
@@ -3803,7 +3843,8 @@ function Connect({ onDone }: { onDone: () => void }) {
           </button>
         </form>
         <small>
-          Get your address and pairing token from Settings on the Windows app.
+          On restaurant Wi-Fi you can still pair with the Windows hub. Away
+          from the restaurant, use the internet sign-in.
         </small>
       </section>
     </div>

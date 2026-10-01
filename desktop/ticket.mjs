@@ -38,9 +38,14 @@ export function ticketSizes(settings, station) {
     cook: kitchen ? Math.round(body * 1.15) : body,
   };
 }
+export function paperMm(settings) {
+  const width = Number(settings?.paperWidth);
+  return [58, 80].includes(width) ? width : 80;
+}
 function sheet(settings, station, body) {
   const s = ticketSizes(settings, station);
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>@page{margin:3mm;size:${settings.paperWidth}mm auto}body{font:${s.body}px/${Math.round(s.body * 1.2)}px monospace;color:#000;max-width:${settings.paperWidth - 8}mm;margin:0}h1{font-size:${s.title}px;margin:6px 0}h2{font-size:${s.heading}px;margin:4px 0}article{border-top:1px dashed;padding:10px 0}.row{display:flex;justify-content:space-between;gap:8px}small{font-size:${s.meta}px}p{white-space:pre-wrap;margin:6px 0}strong{font-size:${s.item}px}.cook{font-size:${s.cook}px;font-weight:700}.total,.due{font-weight:700}</style></head><body>${body}</body></html>`;
+  const paper = paperMm(settings);
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>@page{margin:0;size:${paper}mm auto}html,body{width:${paper}mm;margin:0;padding:2mm 5mm;box-sizing:border-box;font:${s.body}px/${Math.round(s.body * 1.2)}px monospace;color:#000}h1{font-size:${s.title}px;margin:6px 0}h2{font-size:${s.heading}px;margin:4px 0}article{border-top:1px dashed;padding:10px 0}.row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}.name{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}.price{flex:0 0 auto;white-space:nowrap;text-align:right}small{font-size:${s.meta}px}p{white-space:pre-wrap;margin:6px 0}strong{font-size:${s.item}px}.cook{font-size:${s.cook}px;font-weight:700}.total,.due{font-weight:700}</style></head><body>${body}</body></html>`;
 }
 function itemBlock(i) {
   const lines = ticketLines(i);
@@ -51,10 +56,17 @@ function itemBlock(i) {
   }${rest.length ? `<p>${escape(rest.join("\n"))}</p>` : ""}</article>`;
 }
 export function ticketHtml(job, settings) {
+  const kitchen = job.station === "kitchen";
+  const heading = kitchen
+    ? "KITCHEN"
+    : `${String(job.station || "").toUpperCase()} · ${job.kind || ""}`;
+  const meta = kitchen
+    ? escape(new Date(job.createdAt).toLocaleString())
+    : `${escape(new Date(job.createdAt).toLocaleString())}<br>${escape(job.actor)}<br>Ticket ${escape(job.id)}`;
   return sheet(
     settings,
     job.station,
-    `<h2>${escape(settings.name)}</h2><h1>${escape(String(job.station || "").toUpperCase())} · ${escape(job.kind)}</h1><h2>${escape(job.tableName)}</h2><small>${escape(new Date(job.createdAt).toLocaleString())}<br>${escape(job.actor)}<br>Ticket ${escape(job.id)}</small>${(job.items || []).map(itemBlock).join("")}<p>${escape(settings.ticketFooter)}</p>`,
+    `<h2>${escape(settings.name)}</h2><h1>${escape(heading)}</h1><h2>${escape(job.tableName)}</h2><small>${meta}</small>${(job.items || []).map(itemBlock).join("")}<p>${escape(settings.ticketFooter)}</p>`,
   );
 }
 export function billHtml(job, settings) {
@@ -66,7 +78,7 @@ export function billHtml(job, settings) {
     .map((i) => {
       const extra = ticketLines(i);
       const paidQty = i.paidQty || 0;
-      return `<article><div class="row"><strong>${i.qty} × ${escape(i.name)}</strong><span>${escape(money(settings, unitAmount(i) * i.qty))}</span></div>${
+      return `<article><div class="row"><strong class="name">${i.qty} × ${escape(i.name)}</strong><span class="price">${escape(money(settings, unitAmount(i) * i.qty))}</span></div>${
         extra.length ? `<p>${escape(extra.join("\n"))}</p>` : ""
       }${paidQty ? `<p>Paid: ${paidQty}</p>` : ""}</article>`;
     })
@@ -74,9 +86,9 @@ export function billHtml(job, settings) {
   return sheet(
     settings,
     "bill",
-    `<h2>${escape(settings.name)}</h2><h1>BILL</h1><h2>${escape(job.tableName)}</h2><small>${escape(new Date(job.createdAt).toLocaleString())}<br>${escape(job.actor)}</small>${lines}<p class="total"><span class="row"><span>Total</span><span>${escape(money(settings, total))}</span></span></p>${
+    `<h2>${escape(settings.name)}</h2><h1>BILL</h1><h2>${escape(job.tableName)}</h2><small>${escape(new Date(job.createdAt).toLocaleString())}<br>${escape(job.actor)}</small>${lines}<p class="total"><span class="row"><span>Total</span><span class="price">${escape(money(settings, total))}</span></span></p>${
       paid
-        ? `<p>Paid ${escape(money(settings, paid))}</p><p class="due"><span class="row"><span>Due</span><span>${escape(money(settings, due))}</span></span></p>`
+        ? `<p>Paid ${escape(money(settings, paid))}</p><p class="due"><span class="row"><span>Due</span><span class="price">${escape(money(settings, due))}</span></span></p>`
         : ""
     }<p>${escape(settings.ticketFooter)}</p>`,
   );

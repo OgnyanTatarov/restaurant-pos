@@ -188,8 +188,14 @@ if (!app.requestSingleInstanceLock()) {
         const printers = await win.webContents.getPrintersAsync();
         if (!printers.some((p) => p.name === deviceName))
           throw Error(`Printer unavailable: ${deviceName}`);
+        const paper = [58, 80].includes(engine.state.settings.paperWidth)
+          ? engine.state.settings.paperWidth
+          : 80;
         const sheet = new BrowserWindow({
           show: false,
+          width: Math.ceil((paper / 25.4) * 96),
+          height: 1600,
+          useContentSize: true,
           webPreferences: {
             sandbox: true,
             nodeIntegration: false,
@@ -213,6 +219,7 @@ if (!app.requestSingleInstanceLock()) {
                 deviceName,
                 printBackground: false,
                 margins: { marginType: "none" },
+                pageSize: { width: paper * 1000, height: 1000000 },
               },
               (ok, reason) =>
                 ok
