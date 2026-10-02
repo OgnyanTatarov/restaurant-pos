@@ -384,6 +384,56 @@ main {
 .section-toolbar h2 {
   margin: 0;
 }
+.period {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.period label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #60776e;
+}
+.period input {
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: white;
+  color: inherit;
+}
+.pdf-preview {
+  max-height: 46vh;
+  overflow: auto;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 4px 14px 12px;
+}
+.pdf-preview h3 {
+  margin: 12px 0 4px;
+  font-size: 0.95rem;
+}
+.pdf-preview ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pdf-preview li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 0;
+  border-bottom: 1px solid #eef3f1;
+}
+.pdf-preview li span:last-child {
+  font-variant-numeric: tabular-nums;
+}
 .day-nav {
   display: flex;
   align-items: center;
@@ -1110,16 +1160,6 @@ main {
 }
 .pairing textarea {
   font-family: monospace;
-}
-.audit {
-  max-height: 260px;
-  overflow: auto;
-  margin-top: 20px;
-}
-.audit > div {
-  padding: 12px 0;
-  border-top: 1px solid var(--border);
-  font-size: 0.8125rem;
 }
 .banner {
   display: flex;

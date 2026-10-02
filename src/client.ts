@@ -6,6 +6,7 @@ import type {
   Command,
   PrinterAssignments,
 } from "./types";
+import { menuFromWebsiteRows } from "../core/website-menu.mjs";
 export const desktop = !!window.posDesktop;
 export const native = Capacitor.isNativePlatform();
 if (native) document.documentElement.classList.add("native");
@@ -257,6 +258,26 @@ async function readCloud() {
     throw Error(
       "No cloud snapshot yet. Keep the Windows till open and online once so it can publish the restaurant.",
     );
+  const menuRows = await request(
+    `${target.url}/rest/v1/pos_menu_items?restaurant_id=eq.${encodeURIComponent(target.restaurantId)}&select=id,name,category,category_sort,price,station,available,image,modifiers,addon_groups,cook_options,side_mode,sort_order&order=category_sort.asc,sort_order.asc`,
+    "GET",
+    undefined,
+    h,
+  );
+  const state = rows[0].state;
+  if (Array.isArray(menuRows) && menuRows.length) {
+    const menu = menuFromWebsiteRows(menuRows) as {
+      categories: State["categories"];
+      menu: State["menu"];
+    };
+    state.categories = menu.categories;
+    state.menu = menu.menu;
+  }
+  state.orders = (state.orders || []).filter(
+    (order: { status: string }) => order.status === "open",
+  );
+  state.jobs = [];
+  state.audit = [];
   const members = await request(
     `${target.url}/rest/v1/pos_members?restaurant_id=eq.${encodeURIComponent(target.restaurantId)}&select=user_id,display_name,role`,
     "GET",
@@ -265,7 +286,7 @@ async function readCloud() {
   );
   if (!members.length) throw Error("Restaurant membership is missing");
   return {
-    state: rows[0].state,
+    state,
     actor: {
       id: members[0].user_id,
       name: members[0].display_name,

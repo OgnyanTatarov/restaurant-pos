@@ -17,12 +17,17 @@ project, open SQL Editor and execute `supabase/001_restaurant.sql` once. It crea
 - `pos_members`: users and waiter/manager permissions.
 - `pos_hubs`: each Windows computer that is sharing this restaurant.
 - `pos_events`: the ordered command log both computers apply.
-- `pos_snapshots`: latest restaurant state for mobile readers (menu, tables, and orders live in this JSON, not as separate SQL tables).
+- `pos_snapshots`: latest restaurant state for mobile readers (orders and the working menu still live in this JSON).
+- `pos_menu_items`: the website menu. The till publishes every dish, including whether it is available to order. The website reads this table and does not write it.
 - `pos_commands`: mobile commands and their result.
 - `pos_submit_command`: validates membership and fixes command ownership server-side.
 - `pos_claim_hub`: registers a Windows computer; more than one till is allowed.
 
 The migration enables row-level security. Authenticated mobile clients can read their own memberships, restaurant snapshot and commands. They cannot directly overwrite snapshots or command results. Only the server-side desktop bridge can do so.
+
+The website menu is `supabase/migrations/20261002120000_pos_menu_items.sql`. Run that file once in the SQL editor of the POS project (`nebpmyoglgmaztexbchl`). It creates `pos_menu_items`. The till and the website both read the menu from that table. Anyone can read it, including the website with the anon key. Only the till can change it. `available` is the flag the till uses to show or hide a dish for ordering. Prices are integer minor units. The website can subscribe to realtime changes on that table.
+
+The cloud snapshot keeps the live floor, not an order archive. Closed, voided, and deleted orders are left on each till. `pos_events` and `pos_commands` are the live sync log between computers, not a history you need to keep.
 
 ## 2. Create the restaurant and staff
 

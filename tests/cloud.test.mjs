@@ -87,6 +87,18 @@ test("cloud bridge claims hub, checks membership, processes once and publishes r
         (c) => c.url.includes("pos_snapshots") && c.options.method === "POST",
       ),
     );
+    const menuPost = calls.find(
+      (c) => c.url.includes("pos_menu_items") && c.options.method === "POST",
+    );
+    const published = JSON.parse(menuPost.options.body);
+    assert.ok(published.length > 0);
+    assert.ok(published.every((row) => row.restaurant_id === restaurantId));
+    assert.equal(
+      calls.some(
+        (c) => c.url.includes("pos_menu_items") && c.options.method === "DELETE",
+      ),
+      true,
+    );
     const ack = calls.find(
       (c) => c.url.includes("pos_commands") && c.options.method === "PATCH",
     );

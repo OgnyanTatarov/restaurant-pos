@@ -422,6 +422,7 @@ export class Engine {
         "job.resolve",
         "demo.load",
         "menu.replace",
+        "menu.sync",
       ].includes(type)
     )
       fail("Manager permission required", 403);
@@ -581,6 +582,7 @@ export class Engine {
           if (s.orders.some((o) => o.status === "open"))
             fail("Close open orders before replacing the menu");
           if (Array.isArray(p.categories) && Array.isArray(p.menu)) {
+            if (!p.menu.length) fail("The PDF menu has no dishes");
             s.categories = structuredClone(p.categories);
             s.menu = structuredClone(p.menu);
             if (p.settings && typeof p.settings === "object" && p.settings.name)
@@ -600,6 +602,13 @@ export class Engine {
               ? {}
               : { currency: angel.settings.currency }),
           };
+          break;
+        }
+        case "menu.sync": {
+          if (!Array.isArray(p.categories) || !Array.isArray(p.menu) || !p.menu.length)
+            fail("The menu has no dishes");
+          s.categories = structuredClone(p.categories);
+          s.menu = structuredClone(p.menu);
           break;
         }
         case "settings.save": {

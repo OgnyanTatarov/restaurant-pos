@@ -917,3 +917,34 @@ test("ticket text escapes user HTML and retains non-Latin characters", () => {
   assert.ok(html.includes("Без лед"));
   e.close();
 });
+test("the shared menu can replace the catalogue while an order is open", () => {
+  const e = setup();
+  const orderId = open(e);
+  const before = e.state.menu.length;
+  e.execute(
+    command("menu.sync", {
+      categories: [
+        { id: randomUUID(), name: "Starters", deleted: false, sideMode: "none", sides: [] },
+      ],
+      menu: [
+        {
+          id: randomUUID(),
+          name: "Crispy Mac & Cheese Bites",
+          price: 795,
+          category: "Starters",
+          station: "kitchen",
+          available: true,
+          deleted: false,
+          modifiers: [],
+          addonGroups: [],
+          cookOptions: [],
+          sideMode: "inherit",
+        },
+      ],
+    }),
+  );
+  assert.equal(e.state.orders.find((order) => order.id === orderId).status, "open");
+  assert.equal(e.state.menu.length, 1);
+  assert.notEqual(before, 1);
+  e.close();
+});

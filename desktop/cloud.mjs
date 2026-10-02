@@ -1,6 +1,7 @@
 // Both Windows hubs share one ordered event log. Each machine applies every
 // event; only the originating machine prints tickets for that command.
 import { createHash, randomUUID } from "node:crypto";
+import { websiteMenuRows, menuFromWebsiteRows } from "../core/website-menu.mjs";
 
 const sha = (v) => createHash("sha256").update(v).digest("hex");
 
@@ -42,6 +43,43 @@ export function enrichCommand(command) {
   }
   payload.at ||= new Date().toISOString();
   return { ...command, payload };
+}
+
+function cloudSnapshot(snapshot) {
+  return {
+    ...snapshot,
+    orders: (snapshot.orders || []).filter((order) => order.status === "open"),
+    jobs: [],
+    audit: [],
+  };
+}
+
+function menuSignature(menu) {
+  return (menu || [])
+    .filter((item) => !item.deleted)
+    .map((item) =>
+      [item.id, item.name, item.price, item.category, item.station, item.available].join("\u001f"),
+    )
+    .join("\n");
+}
+
+async function publishWebsiteMenu(request, state, restaurantId, updatedAt) {
+  const rows = websiteMenuRows(state, restaurantId, updatedAt);
+  for (let index = 0; index < rows.length; index += 25) {
+    await request("pos_menu_items?on_conflict=restaurant_id,id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(rows.slice(index, index + 25)),
+    });
+  }
+  const ids = rows.map((row) => row.id).join(",");
+  const filter = ids
+    ? `restaurant_id=eq.${encodeURIComponent(restaurantId)}&id=not.in.(${ids})`
+    : `restaurant_id=eq.${encodeURIComponent(restaurantId)}`;
+  await request(`pos_menu_items?${filter}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
 }
 
 export function startCloud(engine, config, onStatus = () => {}) {
@@ -164,11 +202,29 @@ export function startCloud(engine, config, onStatus = () => {}) {
       ownError = failures.get(waitingId);
     if (ownError) throw ownError;
   };
+  const pullWebsiteMenu = async () => {
+    const rows = await request(
+      `pos_menu_items?restaurant_id=eq.${encodeURIComponent(config.restaurantId)}&select=id,name,category,category_sort,price,station,available,image,modifiers,addon_groups,cook_options,side_mode,sort_order&order=category_sort.asc,sort_order.asc`,
+    );
+    if (!rows?.length) return;
+    const next = menuFromWebsiteRows(rows);
+    if (menuSignature(next.menu) === menuSignature(engine.state.menu)) return;
+    await withEngine(() => {
+      engine.execute(
+        { id: randomUUID(), type: "menu.sync", payload: next },
+        desktopActor(),
+        { print: false },
+      );
+    });
+  };
   const publishSnapshot = () => {
     const run = publishChain.then(async () => {
+      if (stopped) return;
+      await pullWebsiteMenu();
       if (stopped || engine.state.revision === lastRevision) return;
-      const snapshot = engine.snapshot();
+      const snapshot = cloudSnapshot(engine.snapshot());
       const revision = snapshot.revision;
+      const updatedAt = new Date().toISOString();
       await request("pos_snapshots?on_conflict=restaurant_id", {
         method: "POST",
         headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
@@ -177,9 +233,10 @@ export function startCloud(engine, config, onStatus = () => {}) {
           revision,
           event_seq: engine.eventSeq(),
           state: snapshot,
-          updated_at: new Date().toISOString(),
+          updated_at: updatedAt,
         }),
       });
+      await publishWebsiteMenu(request, snapshot, config.restaurantId, updatedAt);
       if (revision > lastRevision) lastRevision = revision;
     });
     publishChain = run.then(

@@ -17,7 +17,6 @@ import {
   Smartphone,
   Wifi,
   Monitor,
-  Download,
   X,
   ArrowRightLeft,
   Scissors,
@@ -30,6 +29,7 @@ import {
   BarChart3,
   ImagePlus,
   Users,
+  FileText,
 } from "lucide-react";
 import {
   desktop,
@@ -45,6 +45,7 @@ import {
   cloudProject,
   signedIn,
 } from "./client";
+import { menuFromPdf } from "./pdf-menu";
 import type {
   State,
   Order,
@@ -187,6 +188,18 @@ function shiftDay(key: string, by: number) {
   const next = new Date(y, m - 1, d + by);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${next.getFullYear()}-${p(next.getMonth() + 1)}-${p(next.getDate())}`;
+}
+function weekStartKey(key = todayKey()) {
+  const [y, m, d] = key.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  const weekday = date.getDay();
+  date.setDate(date.getDate() - (weekday === 0 ? 6 : weekday - 1));
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`;
+}
+function monthStartKey(key = todayKey()) {
+  const [y, m] = key.split("-").map(Number);
+  return `${y}-${String(m).padStart(2, "0")}-01`;
 }
 function formatDay(key: string) {
   const [y, m, d] = key.split("-").map(Number);
@@ -471,6 +484,23 @@ function App() {
         onClose={() => setModal(null)}
         onSave={async (p) => {
           if (await act("menu.save", p)) setModal(null);
+        }}
+      />,
+    );
+  }
+  function openMenuPdf() {
+    setModal(
+      <MenuPdfImport
+        onClose={() => setModal(null)}
+        onReplace={async (parsed) => {
+          if (
+            await act(
+              "menu.replace",
+              parsed,
+              "Menu replaced from the PDF",
+            )
+          )
+            setModal(null);
         }}
       />,
     );
@@ -1464,6 +1494,12 @@ function App() {
                       <Plus size={18} />
                       Add menu item
                     </button>
+                    {manager && (
+                      <button onClick={openMenuPdf}>
+                        <FileText size={18} />
+                        Upload PDF menu
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="panel">
@@ -1969,9 +2005,9 @@ function App() {
                     <section className="panel padded">
                       <h2>Load menu</h2>
                       <p>
-                        Replace categories and dishes with the Angel Steakhouse
-                        menu. Close open orders first. Past tickets keep their
-                        original lines.
+                        Replace categories and dishes from a menu PDF, or load
+                        the Angel Steakhouse menu. Close open orders first. Past
+                        tickets keep their original lines.
                       </p>
                       <button
                         onClick={() =>
@@ -1989,6 +2025,7 @@ function App() {
                       >
                         Load Angel Steakhouse menu
                       </button>
+                      <button onClick={openMenuPdf}>Upload a PDF menu</button>
                     </section>
                     <section className="panel padded">
                       <h2>Tables & rooms</h2>
@@ -2026,47 +2063,12 @@ function App() {
                   </>
                 )}
                 {desktop ? (
-                  <>
-                    <DesktopSettings
-                      info={info}
-                      setInfo={setInfo}
-                      onError={setError}
-                      hasPin={!!s.settings.managerPinHash}
-                    />
-                    <section className="panel padded">
-                      <h2>Backup & audit</h2>
-                      <p>
-                        Create a full SQLite backup including order history and
-                        paired devices.
-                      </p>
-                      <button
-                        onClick={async () => {
-                          try {
-                            const p = await ipc("backup");
-                            if (p) setNotice("Backup saved");
-                          } catch (e) {
-                            setError((e as Error).message);
-                          }
-                        }}
-                      >
-                        <Download size={17} />
-                        Save backup
-                      </button>
-                      <div className="audit">
-                        {[...s.audit]
-                          .reverse()
-                          .slice(0, 30)
-                          .map((a) => (
-                            <div key={a.id}>
-                              <strong>{a.action}</strong>
-                              <small>
-                                {date(a.at)} · {a.actor}
-                              </small>
-                            </div>
-                          ))}
-                      </div>
-                    </section>
-                  </>
+                  <DesktopSettings
+                    info={info}
+                    setInfo={setInfo}
+                    onError={setError}
+                    hasPin={!!s.settings.managerPinHash}
+                  />
                 ) : (
                   <section className="panel padded">
                     <h2>Device connection</h2>
@@ -2445,6 +2447,97 @@ function CategoryForm({
           <button className="primary">Save category</button>
         </footer>
       </form>
+    </Modal>
+  );
+}
+function MenuPdfImport({
+  onClose,
+  onReplace,
+}: {
+  onClose: () => void;
+  onReplace: (parsed: {
+    categories: Category[];
+    menu: MenuItem[];
+  }) => Promise<void>;
+}) {
+  const file = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [parsed, setParsed] = useState<{
+    categories: Category[];
+    menu: MenuItem[];
+  } | null>(null);
+  async function read(selected: File) {
+    setBusy(true);
+    setError("");
+    setParsed(null);
+    try {
+      const next = await menuFromPdf(new Uint8Array(await selected.arrayBuffer()));
+      if (!next.menu.length) {
+        setError("No dishes with prices were found in that PDF.");
+        return;
+      }
+      setParsed(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not read that PDF");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal title="Upload menu PDF" onClose={onClose} wide>
+      <p>
+        The PDF is read for category headings and dish prices. Check the list,
+        then replace the live menu.
+      </p>
+      <input
+        ref={file}
+        hidden
+        type="file"
+        accept="application/pdf,.pdf"
+        onChange={(e) => {
+          const selected = e.target.files?.[0];
+          e.target.value = "";
+          if (selected) void read(selected);
+        }}
+      />
+      <button type="button" disabled={busy} onClick={() => file.current?.click()}>
+        {busy ? "Reading PDF…" : "Choose PDF"}
+      </button>
+      {error && <p className="danger-text">{error}</p>}
+      {parsed && (
+        <>
+          <p>
+            {parsed.menu.length} dishes in {parsed.categories.length}{" "}
+            {parsed.categories.length === 1 ? "category" : "categories"}.
+          </p>
+          <div className="pdf-preview">
+            {parsed.categories.map((category) => (
+              <section key={category.id}>
+                <h3>{category.name}</h3>
+                <ul>
+                  {parsed.menu
+                    .filter((item) => item.category === category.name)
+                    .map((item) => (
+                      <li key={item.id}>
+                        <span>{item.name}</span>
+                        <span>{(item.price / 100).toFixed(2)}</span>
+                      </li>
+                    ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+          <footer>
+            <button type="button" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="primary" type="button" onClick={() => onReplace(parsed)}>
+              Replace menu
+            </button>
+          </footer>
+        </>
+      )}
     </Modal>
   );
 }
@@ -3539,36 +3632,35 @@ function Analytics({
   categories: Category[];
   money: (v: number) => string;
 }) {
-  const [day, setDay] = useState<string | null>(null);
-  const selected = day || todayKey();
-  const [y, m, d] = selected.split("-").map(Number);
-  const startOfDay = new Date(y, m - 1, d);
-  const endOfDay = new Date(y, m - 1, d + 1);
-  const startOfWeek = new Date(startOfDay);
-  const weekday = startOfWeek.getDay();
-  startOfWeek.setDate(startOfWeek.getDate() - (weekday === 0 ? 6 : weekday - 1));
-  const endOfWeek = new Date(startOfWeek);
-  endOfWeek.setDate(endOfWeek.getDate() + 7);
-  const weekStartKey = dayKey(startOfWeek.toISOString());
-  const weekEnd = new Date(endOfWeek);
-  weekEnd.setDate(weekEnd.getDate() - 1);
-  const currentWeek =
-    todayKey() >= weekStartKey && todayKey() <= dayKey(weekEnd.toISOString());
-  const weekName = currentWeek
-    ? "this week"
-    : `${formatDay(weekStartKey)} – ${formatDay(dayKey(weekEnd.toISOString()))}`;
-  const dayName = selected === todayKey() ? "today" : formatDay(selected);
-  const inRange = (o: Order, from: Date, to: Date) => {
+  const today = todayKey();
+  const [from, setFrom] = useState(() => weekStartKey());
+  const [to, setTo] = useState(today);
+  const start = (() => {
+    const [y, m, d] = from.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  })();
+  const end = (() => {
+    const [y, m, d] = to.split("-").map(Number);
+    return new Date(y, m - 1, d + 1);
+  })();
+  const periodName =
+    from === today && to === today
+      ? "today"
+      : from === weekStartKey(today) && to === today
+        ? "this week"
+        : from === monthStartKey(today) && to === today
+          ? "this month"
+          : from === to
+            ? formatDay(from)
+            : `${formatDay(from)} – ${formatDay(to)}`;
+  const period = orders.filter((o) => {
     if (!o.closedAt) return false;
-    const t = new Date(o.closedAt);
-    return t >= from && t < to;
-  };
-  const today = orders.filter((o) => inRange(o, startOfDay, endOfDay));
-  const week = orders.filter((o) => inRange(o, startOfWeek, endOfWeek));
-  const weekTotal = week.reduce((n, o) => n + (o.paidTotal || 0), 0);
-  const todayTotal = today.reduce((n, o) => n + (o.paidTotal || 0), 0);
+    const closed = new Date(o.closedAt);
+    return closed >= start && closed < end;
+  });
+  const periodTotal = period.reduce((n, o) => n + (o.paidTotal || 0), 0);
   const dishes = new Map<string, Map<string, { qty: number; total: number }>>();
-  for (const order of week) {
+  for (const order of period) {
     for (const item of order.items.filter((i) => !i.voided)) {
       const category =
         menu.find((m) => m.id === item.menuId)?.category || "Other";
@@ -3599,30 +3691,94 @@ function Analytics({
     <>
       <div className="section-toolbar">
         <h2>Analytics</h2>
-        <DayNav day={day} onChange={setDay} />
+        <div className="period">
+          <div className="tabs">
+            <button
+              type="button"
+              className={from === today && to === today ? "selected" : ""}
+              onClick={() => {
+                setFrom(today);
+                setTo(today);
+              }}
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              className={
+                from === weekStartKey(today) && to === today ? "selected" : ""
+              }
+              onClick={() => {
+                setFrom(weekStartKey(today));
+                setTo(today);
+              }}
+            >
+              This week
+            </button>
+            <button
+              type="button"
+              className={
+                from === monthStartKey(today) && to === today ? "selected" : ""
+              }
+              onClick={() => {
+                setFrom(monthStartKey(today));
+                setTo(today);
+              }}
+            >
+              This month
+            </button>
+          </div>
+          <label>
+            From
+            <input
+              type="date"
+              value={from}
+              max={to}
+              onChange={(e) => {
+                const next = e.target.value;
+                if (!next || next > today) return;
+                setFrom(next);
+                if (next > to) setTo(next);
+              }}
+            />
+          </label>
+          <label>
+            To
+            <input
+              type="date"
+              value={to}
+              min={from}
+              max={today}
+              onChange={(e) => {
+                const next = e.target.value;
+                if (!next || next > today) return;
+                setTo(next);
+                if (next < from) setFrom(next);
+              }}
+            />
+          </label>
+        </div>
       </div>
       <div className="stats">
         <div>
-          <span>Paid {dayName}</span>
-          <strong>{money(todayTotal)}</strong>
+          <span>Paid {periodName}</span>
+          <strong>{money(periodTotal)}</strong>
         </div>
         <div>
-          <span>Paid {weekName}</span>
-          <strong>{money(weekTotal)}</strong>
-        </div>
-        <div>
-          <span>Orders {weekName}</span>
-          <strong>{week.length}</strong>
+          <span>Orders {periodName}</span>
+          <strong>{period.length}</strong>
         </div>
         <div>
           <span>Average ticket</span>
-          <strong>{money(week.length ? Math.round(weekTotal / week.length) : 0)}</strong>
+          <strong>
+            {money(period.length ? Math.round(periodTotal / period.length) : 0)}
+          </strong>
         </div>
       </div>
       <section className="panel padded">
-        <h2>Most sold {weekName}</h2>
+        <h2>Most sold {periodName}</h2>
         {!grouped.length && (
-          <p className="muted">No paid orders {weekName}.</p>
+          <p className="muted">No paid orders {periodName}.</p>
         )}
         {grouped.map((group) => (
           <div className="analytics-category" key={group.name}>
@@ -4028,17 +4184,6 @@ function DesktopSettings({
           installer, every Windows PC checks this address and installs it.
         </p>
         <UpdateSettings info={info} onError={onError} setInfo={setInfo} />
-      </section>
-      <section className="panel padded">
-        <h2>Supabase & local data</h2>
-        <p>{info?.cloud?.message || "Not configured"}</p>
-        <p>
-          This install connects to the restaurant cloud automatically. Set
-          printers on this computer. Keep the server key off phones and
-          screenshots.
-        </p>
-        <small>Data folder</small>
-        <code className="address">{info?.dataPath}</code>
       </section>
       <section className="panel padded">
         <h2>Close the POS</h2>
