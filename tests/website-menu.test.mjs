@@ -37,6 +37,15 @@ test("the flyer menu round-trips through the website rows", () => {
   const tomahawk = restored.menu.find((item) => item.name === "45 oz Tomahawk");
   assert.equal(tomahawk.price, 9000);
   assert.equal(tomahawk.cookOptions.length, 6);
+  assert.equal(tomahawk.sideMode, "none");
+  const burger = restored.menu.find((item) => item.name === "Simply the Best");
+  const burgerCategory = restored.categories.find((category) => category.name === "Burgers");
+  assert.equal(burger.sideMode, "mixed");
+  assert.equal(burger.modifiers.length, 6);
+  assert.equal(burger.addonGroups.length, 2);
+  assert.ok(burgerCategory.sides.some((side) => side.name === "Fries" && side.price === 0));
+  assert.ok(burgerCategory.sides.some((side) => side.name === "Halloumi Fries" && side.price === 300));
+  assert.equal(restored.menu.find((item) => item.name === "Extra Patty").sideMode, "none");
   assert.equal(
     restored.menu.find((item) => item.name === "Smirnoff 25ml").station,
     "bar",

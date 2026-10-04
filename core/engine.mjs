@@ -780,6 +780,230 @@ export class Engine {
           m.deleted = true;
           break;
         }
+        case "order.web": {
+          const customerName = text(p.customerName, "customer name", 80);
+          const phone = String(p.phone || "").trim().slice(0, 40);
+          const orderNote = String(p.note || "").trim().slice(0, 300);
+          const fulfilment = p.fulfilment === "delivery" ? "delivery" : "collection";
+          const address = String(p.address || "").trim().slice(0, 200);
+          if (fulfilment === "delivery" && address.length < 5)
+            fail("Delivery address is required");
+          const lines = Array.isArray(p.items) ? p.items : [];
+          if (!lines.length || lines.length > 40)
+            fail("The website order has no dishes");
+          const orderId = p.orderId ? text(p.orderId, "order", 80) : randomUUID();
+          if (s.orders.some((o) => o.id === orderId)) {
+            result = { orderId };
+            break;
+          }
+          const placed = {
+            id: orderId,
+            tableId: "",
+            tableName: `${fulfilment === "delivery" ? "Delivery" : "Collection"} · ${customerName}`,
+            channel: "website",
+            customerName,
+            phone,
+            fulfilment,
+            address: fulfilment === "delivery" ? address : "",
+            note: orderNote,
+            status: "open",
+            version: 0,
+            items: [],
+            createdAt: now,
+            openedBy: actor.name,
+          };
+          lines.forEach((line, index) => {
+            if (!line || typeof line !== "object") fail("Invalid dish");
+            const qty = integer(line.qty, "quantity", 1, 20);
+            const menuId = text(String(line.menuId || ""), "dish", 80);
+            const dish = s.menu.find((item) => item.id === menuId && !item.deleted);
+            const lineNote = [
+              String(line.note || "").trim(),
+              index === 0 ? orderNote : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")
+              .slice(0, 300);
+            if (dish && dish.available) {
+              const category = s.categories.find(
+                (c) => !c.deleted && c.name === dish.category,
+              );
+              const sides = (category?.sides || []).filter((side) => !side.deleted);
+              const requiredSide = sideModeOf(dish, category);
+              let side;
+              if (requiredSide !== "none") {
+                side = sides.find((x) => x.id === line.sideId);
+                if (!side && !sides.length && String(line.sideName || "").trim())
+                  side = {
+                    id: String(line.sideId || ""),
+                    name: String(line.sideName).trim().slice(0, 80),
+                    price:
+                      Number.isSafeInteger(line.sidePrice) && line.sidePrice >= 0
+                        ? line.sidePrice
+                        : 0,
+                  };
+                if (!side) fail("Choose a side");
+                side = {
+                  id: side.id,
+                  name: side.name,
+                  price: requiredSide === "free" ? 0 : side.price || 0,
+                };
+              } else if (String(line.sideName || "").trim()) {
+                side = {
+                  id: String(line.sideId || ""),
+                  name: String(line.sideName).trim().slice(0, 80),
+                  price:
+                    Number.isSafeInteger(line.sidePrice) && line.sidePrice >= 0
+                      ? line.sidePrice
+                      : 0,
+                };
+              }
+              const cooks = (dish.cookOptions || []).filter((c) => !c.deleted);
+              let cook;
+              if (cooks.length) {
+                cook = cooks.find((c) => c.id === line.cookId);
+                if (!cook) fail("Choose how it's cooked");
+                cook = { id: cook.id, name: cook.name };
+              }
+              const requestedExtras = Array.isArray(line.extras) ? line.extras : [];
+              const localExtras = (dish.addonGroups || []).some((group) =>
+                (group.extras || []).some((extra) => !extra.deleted),
+              );
+              const extras = [];
+              for (const requested of requestedExtras.slice(0, 12)) {
+                const extra = localExtras ? findExtra(dish, requested?.id) : null;
+                if (localExtras) {
+                  if (!extra) fail("Invalid extra");
+                  extras.push({
+                    id: extra.id,
+                    name: extra.name,
+                    price: extra.price || 0,
+                  });
+                } else if (requested?.name) {
+                  extras.push({
+                    id: String(requested.id || ""),
+                    name: String(requested.name).trim().slice(0, 80),
+                    price:
+                      Number.isSafeInteger(requested.price) && requested.price >= 0
+                        ? requested.price
+                        : 0,
+                  });
+                }
+              }
+              const requestedLeave = Array.isArray(line.leaveouts) ? line.leaveouts : [];
+              const localLeave = (dish.modifiers || []).some(
+                (mod) => !mod.deleted && mod.kind === "leaveout",
+              );
+              const leaveouts = [];
+              for (const requested of requestedLeave.slice(0, 12)) {
+                const mod = localLeave
+                  ? (dish.modifiers || []).find(
+                      (item) =>
+                        item.id === requested?.id &&
+                        !item.deleted &&
+                        item.kind === "leaveout",
+                    )
+                  : null;
+                if (localLeave) {
+                  if (!mod) fail("Invalid leave-out");
+                  leaveouts.push({ id: mod.id, name: mod.name });
+                } else if (requested?.name) {
+                  leaveouts.push({
+                    id: String(requested.id || ""),
+                    name: String(requested.name).trim().slice(0, 80),
+                  });
+                }
+              }
+              const price =
+                Number.isSafeInteger(line.price) &&
+                line.price >= 0 &&
+                line.price <= 10000000
+                  ? line.price
+                  : dish.price;
+              placed.items.push({
+                id: randomUUID(),
+                menuId: dish.id,
+                name: dish.name,
+                price,
+                station: dish.station,
+                qty,
+                note: lineNote,
+                sent: false,
+                voided: false,
+                paidQty: 0,
+                choices: {
+                  ...(cook ? { cook } : {}),
+                  ...(side ? { side } : {}),
+                  extras,
+                  leaveouts,
+                },
+              });
+              return;
+            }
+            const storedName =
+              typeof line.name === "string" ? line.name.trim() : "";
+            if (!storedName) fail("Menu item is unavailable");
+            const storedPrice = integer(line.price, "price");
+            const cookName = String(line.cookName || "").trim().slice(0, 80);
+            const sideName = String(line.sideName || "").trim().slice(0, 80);
+            const sidePrice =
+              Number.isSafeInteger(line.sidePrice) && line.sidePrice >= 0
+                ? line.sidePrice
+                : 0;
+            const extras = (Array.isArray(line.extras) ? line.extras : [])
+              .filter((extra) => extra?.name)
+              .slice(0, 12)
+              .map((extra) => ({
+                id: String(extra.id || ""),
+                name: String(extra.name).trim().slice(0, 80),
+                price:
+                  Number.isSafeInteger(extra.price) && extra.price >= 0
+                    ? extra.price
+                    : 0,
+              }));
+            const leaveouts = (Array.isArray(line.leaveouts) ? line.leaveouts : [])
+              .filter((mod) => mod?.name)
+              .slice(0, 12)
+              .map((mod) => ({
+                id: String(mod.id || ""),
+                name: String(mod.name).trim().slice(0, 80),
+              }));
+            placed.items.push({
+              id: randomUUID(),
+              menuId,
+              name: storedName.slice(0, 160),
+              price: storedPrice,
+              station: line.station === "bar" ? "bar" : "kitchen",
+              qty,
+              note: lineNote,
+              sent: false,
+              voided: false,
+              paidQty: 0,
+              choices: {
+                ...(cookName
+                  ? { cook: { id: String(line.cookId || ""), name: cookName } }
+                  : {}),
+                ...(sideName
+                  ? {
+                      side: {
+                        id: String(line.sideId || ""),
+                        name: sideName,
+                        price: sidePrice,
+                      },
+                    }
+                  : {}),
+                extras,
+                leaveouts,
+              },
+            });
+          });
+          ticket(placed, placed.items, "NEW");
+          placed.items.forEach((item) => (item.sent = true));
+          placed.version = 1;
+          s.orders.push(placed);
+          result = { orderId: placed.id };
+          break;
+        }
         case "order.open": {
           const t = table(p.tableId);
           if (s.orders.some((o) => o.tableId === t.id && o.status === "open"))

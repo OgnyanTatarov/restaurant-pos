@@ -30,6 +30,7 @@ import {
   ImagePlus,
   Users,
   FileText,
+  ShoppingBag,
 } from "lucide-react";
 import {
   desktop,
@@ -408,6 +409,8 @@ function App() {
     ),
   ];
   const open = s?.orders.filter((o) => o.status === "open") || [];
+  const webOpen = open.filter((o) => o.channel === "website");
+  const floorOpen = open.filter((o) => o.channel !== "website");
   const deletedTables = new Set(
     (s?.tables || []).filter((t) => t.deleted).map((t) => t.id),
   );
@@ -547,7 +550,7 @@ function App() {
   function leaveAdmin() {
     setAdminView(false);
     setSettingsUnlocked(false);
-    if (!["floor", "menu", "printing"].includes(page)) {
+    if (!["floor", "menu", "printing", "online"].includes(page)) {
       setPage("floor");
       setSelected(null);
     }
@@ -595,6 +598,7 @@ function App() {
   const nav = (
     [
       ["floor", "Floor", LayoutGrid],
+      ["online", "Online", ShoppingBag],
       ["menu", "Menu", UtensilsCrossed],
       ["categories", "Categories", Tags],
       ["orders", "Orders", ReceiptText],
@@ -603,7 +607,7 @@ function App() {
       ["settings", "Settings", Settings],
     ] as const
   ).filter(([key]) =>
-    manager || ["floor", "menu", "printing"].includes(key),
+    manager || ["floor", "online", "menu", "printing"].includes(key),
   );
   if (setup)
     return (
@@ -654,6 +658,9 @@ function App() {
                 s?.jobs.some((j) =>
                   ["error", "uncertain"].includes(j.status),
                 ) && <span className="nav-count">!</span>}
+              {key === "online" && webOpen.length > 0 && (
+                <span className="nav-count">{webOpen.length}</span>
+              )}
             </button>
           ))}
         </nav>
@@ -687,6 +694,7 @@ function App() {
                 : (
                     {
                       floor: "Floor overview",
+                      online: "Online orders",
                       menu: "Your menu",
                       categories: "Categories",
                       orders: "Order history",
@@ -794,14 +802,14 @@ function App() {
                   <div>
                     <span>Open tables</span>
                     <strong>
-                      {open.length}
+                      {floorOpen.length}
                       <small> / {tables.length}</small>
                     </strong>
                   </div>
                   <div>
                     <span>Current orders</span>
                     <strong>
-                      {money(open.reduce((n, o) => n + due(o), 0))}
+                      {money(floorOpen.reduce((n, o) => n + due(o), 0))}
                     </strong>
                   </div>
                   <div>
@@ -1694,6 +1702,114 @@ function App() {
                 </div>
               </>
             )}
+            {page === "online" && (
+              <>
+                <div className="stats">
+                  <div>
+                    <span>Waiting</span>
+                    <strong>{webOpen.length}</strong>
+                  </div>
+                  <div>
+                    <span>To collect</span>
+                    <strong>
+                      {money(webOpen.reduce((n, o) => n + due(o), 0))}
+                    </strong>
+                  </div>
+                </div>
+                {!webOpen.length ? (
+                  <div className="empty">
+                    <ShoppingBag size={42} />
+                    <h2>No online orders</h2>
+                    <p>
+                      Orders placed on the website show up here and print to
+                      the kitchen and bar.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="online-list">
+                    {[...webOpen].reverse().map((o) => (
+                      <article className="online-card" key={o.id}>
+                        <header>
+                          <h2>{o.customerName || o.tableName}</h2>
+                          <span className="pill">
+                            {o.fulfilment === "delivery"
+                              ? "Delivery"
+                              : "Collection"}
+                          </span>
+                        </header>
+                        {o.phone && <p className="meta">{o.phone}</p>}
+                        {o.address && <p className="meta">{o.address}</p>}
+                        {o.note && <p className="note">{o.note}</p>}
+                        <ul>
+                          {o.items
+                            .filter((i) => !i.voided)
+                            .map((i) => (
+                              <li key={i.id}>
+                                <span>
+                                  {i.qty} × {i.name}
+                                  {choiceLines(i).length > 0 && (
+                                    <small>{choiceLines(i).join(" · ")}</small>
+                                  )}
+                                </span>
+                                <span>
+                                  {money(unitAmount(i) * i.qty)}
+                                </span>
+                              </li>
+                            ))}
+                        </ul>
+                        <strong className="total">{money(due(o))}</strong>
+                        <div className="row">
+                          <button
+                            disabled={busy}
+                            onClick={() =>
+                              act("order.printBill", {
+                                orderId: o.id,
+                                version: o.version,
+                              }, "Bill sent to the printer")
+                            }
+                          >
+                            Print bill
+                          </button>
+                          <button
+                            disabled={busy}
+                            onClick={() =>
+                              act(
+                                "order.close",
+                                {
+                                  orderId: o.id,
+                                  version: o.version,
+                                  payment: "cash",
+                                },
+                                "Cash payment taken",
+                              )
+                            }
+                          >
+                            Cash
+                          </button>
+                          <button
+                            className="primary"
+                            disabled={busy}
+                            onClick={() =>
+                              act(
+                                "order.close",
+                                {
+                                  orderId: o.id,
+                                  version: o.version,
+                                  payment: "card",
+                                },
+                                "Card payment taken",
+                              )
+                            }
+                          >
+                            Card
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
             {page === "orders" && (
               <>
                 <div className="stats">
@@ -1729,7 +1845,7 @@ function App() {
                       onClick={() => {
                         if (o.status === "open") {
                           setSelected(o.id);
-                          setPage("floor");
+                          setPage(o.channel === "website" ? "online" : "floor");
                         } else
                           setModal(
                             <Modal

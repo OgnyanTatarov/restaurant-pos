@@ -62,6 +62,12 @@ export type Order = {
   id: string;
   tableId: string;
   tableName: string;
+  channel?: "website";
+  customerName?: string;
+  phone?: string;
+  fulfilment?: "collection" | "delivery";
+  address?: string;
+  note?: string;
   status: "open" | "paid" | "void" | "deleted" | "merged";
   version: number;
   items: Item[];

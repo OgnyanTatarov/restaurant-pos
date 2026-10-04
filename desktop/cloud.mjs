@@ -54,11 +54,39 @@ function cloudSnapshot(snapshot) {
   };
 }
 
-function menuSignature(menu) {
-  return (menu || [])
-    .filter((item) => !item.deleted)
+function menuSignature(snapshot) {
+  const menu = snapshot?.menu || snapshot || [];
+  const categories = snapshot?.categories || [];
+  const sides = new Map(
+    categories.map((category) => [
+      category.name,
+      (category.sides || [])
+        .filter((side) => !side.deleted)
+        .map((side) => `${side.name}:${side.price || 0}`)
+        .join(","),
+    ]),
+  );
+  return (Array.isArray(menu) ? menu : [])
+    .filter((item) => item && !item.deleted)
     .map((item) =>
-      [item.id, item.name, item.price, item.category, item.station, item.available].join("\u001f"),
+      [
+        item.id,
+        item.name,
+        item.price,
+        item.category,
+        item.station,
+        item.available,
+        item.sideMode || "",
+        sides.get(item.category) || "",
+        (item.cookOptions || []).map((cook) => cook.name).join(","),
+        (item.modifiers || []).map((mod) => mod.name).join(","),
+        (item.addonGroups || [])
+          .map(
+            (group) =>
+              `${group.name}:${(group.extras || []).map((extra) => `${extra.name}:${extra.price || 0}`).join(",")}`,
+          )
+          .join(";"),
+      ].join("\u001f"),
     )
     .join("\n");
 }
@@ -208,7 +236,14 @@ export function startCloud(engine, config, onStatus = () => {}) {
     );
     if (!rows?.length) return;
     const next = menuFromWebsiteRows(rows);
-    if (menuSignature(next.menu) === menuSignature(engine.state.menu)) return;
+    if (
+      menuSignature(next) ===
+      menuSignature({
+        menu: engine.state.menu,
+        categories: engine.state.categories,
+      })
+    )
+      return;
     await withEngine(() => {
       engine.execute(
         { id: randomUUID(), type: "menu.sync", payload: next },
@@ -216,6 +251,52 @@ export function startCloud(engine, config, onStatus = () => {}) {
         { print: false },
       );
     });
+  };
+  const acceptWebOrders = async () => {
+    const rows = await request(
+      `pos_web_orders?restaurant_id=eq.${encodeURIComponent(config.restaurantId)}&status=eq.new&select=id,customer_name,phone,note,fulfilment,address,items&order=created_at.asc&limit=20`,
+    );
+    for (const row of rows || []) {
+      const claimed = await request(
+        `pos_web_orders?id=eq.${encodeURIComponent(row.id)}&status=eq.new`,
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify({ status: "accepted" }),
+        },
+      );
+      if (!Array.isArray(claimed) || !claimed.length) continue;
+      const command = {
+        id: row.id,
+        type: "order.web",
+        payload: {
+          orderId: row.id,
+          customerName: row.customer_name,
+          phone: row.phone || "",
+          note: row.note || "",
+          fulfilment: row.fulfilment,
+          address: row.address || "",
+          items: Array.isArray(row.items) ? row.items : [],
+        },
+      };
+      try {
+        await insertEvent(command, {
+          id: engine.state.hubId,
+          name: "Website",
+          role: "manager",
+        });
+        await pullApply(row.id);
+      } catch (e) {
+        await request(`pos_web_orders?id=eq.${encodeURIComponent(row.id)}`, {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({
+            status: "rejected",
+            error: String(e.message || "Could not open the order").slice(0, 300),
+          }),
+        }).catch(() => {});
+      }
+    }
   };
   const publishSnapshot = () => {
     const run = publishChain.then(async () => {
@@ -361,6 +442,7 @@ export function startCloud(engine, config, onStatus = () => {}) {
       });
       await ensureBootstrap();
       await pullApply();
+      await acceptWebOrders();
       ingestOnce();
       await publishSnapshot();
       lastError = "";

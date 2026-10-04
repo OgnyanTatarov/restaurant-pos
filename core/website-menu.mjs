@@ -63,14 +63,19 @@ export function menuFromWebsiteRows(rows) {
   );
   const categories = [];
   for (const row of sorted) {
-    if (categories.some((category) => category.name === row.category)) continue;
-    categories.push({
-      id: crypto.randomUUID(),
-      name: row.category,
-      deleted: false,
-      sideMode: "none",
-      sides: [],
-    });
+    let category = categories.find((entry) => entry.name === row.category);
+    const sides = Array.isArray(row.sides) ? row.sides : [];
+    if (!category) {
+      categories.push({
+        id: crypto.randomUUID(),
+        name: row.category,
+        deleted: false,
+        sideMode: "none",
+        sides,
+      });
+      continue;
+    }
+    if (sides.length > category.sides.length) category.sides = sides;
   }
   const menu = sorted.map((row) => ({
     id: row.id,

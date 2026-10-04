@@ -990,6 +990,56 @@ main {
 .order-footer .danger-text {
   border: 0;
 }
+.online-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+.online-card {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.online-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.online-card h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+.online-card .meta,
+.online-card .note {
+  margin: 0;
+  color: #6a7e76;
+}
+.online-card ul {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+}
+.online-card li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+}
+.online-card li small {
+  display: block;
+  color: #6a7e76;
+}
+.online-card .total {
+  font-size: 1.15rem;
+}
+.online-card .row {
+  margin-top: 8px;
+}
 .panel {
   background: white;
   border: 1px solid var(--border);

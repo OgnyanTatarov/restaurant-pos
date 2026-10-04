@@ -359,3 +359,101 @@ test("a waiting phone command does not stop the other till from syncing", async 
     b.close();
   }
 });
+test("a website order is claimed once and opens on the till", async () => {
+  const engine = new Engine();
+  engine.execute({ id: randomUUID(), type: "demo.load" });
+  const dish = engine.state.menu.find(
+    (m) =>
+      m.available &&
+      !m.deleted &&
+      !(m.cookOptions || []).some((c) => !c.deleted),
+  );
+  const webId = randomUUID();
+  const restaurantId = randomUUID();
+  const events = [];
+  let status = "new";
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const method = options.method || "GET";
+    let body = null;
+    if (url.includes("pos_web_orders") && method === "GET") {
+      body =
+        status === "new"
+          ? [
+              {
+                id: webId,
+                customer_name: "Jane",
+                phone: "07700900123",
+                note: "Gate",
+                fulfilment: "collection",
+                address: "",
+                items: [
+                  {
+                    menuId: dish.id,
+                    name: dish.name,
+                    price: dish.price,
+                    qty: 1,
+                    station: dish.station,
+                  },
+                ],
+              },
+            ]
+          : [];
+    } else if (url.includes("pos_web_orders") && method === "PATCH") {
+      const patch = JSON.parse(options.body);
+      if (String(url).includes("status=eq.new") && status === "new") {
+        status = patch.status;
+        body = [{ id: webId, status }];
+      } else body = [];
+    } else if (url.includes("pos_events") && method === "GET") {
+      const after = Number((url.match(/seq=gt\.(\d+)/) || [])[1] || 0);
+      body = events.filter((event) => event.seq > after);
+    } else if (url.includes("pos_events") && method === "POST") {
+      const row = JSON.parse(options.body);
+      if (!events.some((event) => event.id === row.id))
+        events.push({ ...row, seq: events.length + 1 });
+    } else if (url.includes("pos_snapshots") && method === "GET") body = [];
+    else if (url.includes("pos_commands") && method === "GET") body = [];
+    else if (url.includes("pos_hubs")) body = [];
+    else if (url.includes("pos_menu_items") && method === "GET") body = [];
+    return new Response(body == null ? null : JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  let cloud;
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(Error("Bridge timeout")), 4000);
+      const poll = setInterval(() => {
+        const order = engine.state.orders.find((o) => o.id === webId);
+        if (order && status === "accepted") {
+          clearTimeout(timeout);
+          clearInterval(poll);
+          resolve();
+        }
+      }, 20);
+      cloud = startCloud(
+        engine,
+        {
+          url: "https://example.invalid",
+          serviceRoleKey: "test-key",
+          restaurantId,
+        },
+        () => {},
+      );
+    });
+    const order = engine.state.orders.find((o) => o.id === webId);
+    assert.equal(order.channel, "website");
+    assert.equal(order.customerName, "Jane");
+    assert.ok(
+      engine.state.jobs.some((j) => j.orderId === webId && j.status === "queued"),
+    );
+    assert.equal(events.length, 1);
+    assert.equal(events[0].hub_id, engine.state.hubId);
+  } finally {
+    cloud?.stop();
+    globalThis.fetch = original;
+    engine.close();
+  }
+});

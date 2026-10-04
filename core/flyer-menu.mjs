@@ -377,6 +377,105 @@ const SECTIONS = [
   ],
 ];
 
+const INCLUDED_SIDES = [
+  "Fries",
+  "Seasoned Fries",
+  "Cheese Fries",
+  "Sweet Potato Fries",
+  "Twisted Curly Fries",
+  "Mashed Potato",
+  "Onion Rings (8)",
+  "Rice",
+  "Coleslaw",
+  "Side Salad",
+  "Corn on the Cob (2)",
+];
+const ANGEL_SIDES = [
+  "Jalapeno Poppers",
+  "Mozzarella Sticks",
+  "Halloumi Fries",
+  "Chicken Popcorn",
+  "Loaded Fries",
+];
+const row = (name, price = 0) => ({
+  id: id(),
+  name,
+  price: pound(price),
+  deleted: false,
+});
+const leave = (name) => ({
+  id: id(),
+  name,
+  kind: "leaveout",
+  price: 0,
+  deleted: false,
+});
+const group = (name, items) => ({
+  id: id(),
+  name,
+  deleted: false,
+  extras: items.map(([itemName, price]) => row(itemName, price)),
+});
+const mealSides = () => [
+  ...INCLUDED_SIDES.map((name) => row(name, 0)),
+  ...ANGEL_SIDES.map((name) => row(name, 3)),
+];
+const leaveouts = () =>
+  ["Lettuce", "Tomato", "Onion", "Gherkins", "Cheese", "Sauce"].map(leave);
+const extras = () => [
+  group("Extras", [
+    ["Egg", 1],
+    ["Bacon", 1.5],
+    ["Cheese", 1],
+    ["American Cheese", 1],
+    ["Homemade Beef Chilli", 2],
+    ["BBQ Pulled Pork", 2],
+    ["Jalepeno", 1],
+    ["Caramelised Onions", 1],
+    ["Red Onion", 1],
+    ["Fried Mushrooms", 1],
+    ["Nachos", 1],
+    ["Extra Sauce", 1],
+    ["Extra Patty", 4.95],
+  ]),
+  group("Sauces", [
+    ["Chipotle Sauce", 1.5],
+    ["Salsa", 1.5],
+    ["Sour Cream", 1.5],
+    ["Angel BBQ Sauce", 1.5],
+    ["Angel Burger Sauce", 1.5],
+    ["Angel Garlic Mayo", 1.5],
+  ]),
+];
+const filling = () =>
+  group("Loaded with", [
+    ["BBQ Pulled Pork", 0],
+    ["Beef Chilli", 0],
+  ]);
+const wingSauce = () =>
+  group("Sauce", [
+    ["Lemon & herb", 0],
+    ["Mild piri-piri", 0],
+    ["Hot piri-piri", 0],
+    ["Buffalo", 0],
+    ["BBQ sauce", 0],
+  ]);
+const chickenFlavour = () =>
+  group("Flavour", [
+    ["Lemon & herbs", 0],
+    ["Mild piri-piri", 0],
+    ["Hot piri-piri", 0],
+    ["Buffalo", 0],
+  ]);
+const kidsDrink = () =>
+  group("Kids drink", [
+    ["Fruit Shoot", 0],
+    ["Orange juice", 0],
+    ["Apple juice", 0],
+    ["Pineapple juice", 0],
+    ["Mango juice", 0],
+  ]);
+
 function dish(name, price, category) {
   return {
     id: id(),
@@ -396,18 +495,91 @@ function dish(name, price, category) {
   };
 }
 
+function applyService(item) {
+  const { name, category } = item;
+  if (category === "Burgers" && name === "Extra Patty") {
+    item.sideMode = "none";
+    return;
+  }
+  if (["Burgers", "Burgers & Wraps", "Hotdogs"].includes(category)) {
+    item.sideMode = "mixed";
+    item.modifiers = leaveouts();
+    item.addonGroups = extras();
+    return;
+  }
+  if (/two joint chicken wings/i.test(name)) {
+    item.sideMode = "none";
+    item.addonGroups = [chickenFlavour()];
+    return;
+  }
+  if (/^piri-piri chicken wings$/i.test(name)) {
+    item.addonGroups = [wingSauce()];
+    return;
+  }
+  if (name === "Half Piri-piri Chicken" || name === "Chicken Breast") {
+    item.sideMode = "mixed";
+    item.addonGroups = [
+      chickenFlavour(),
+      ...(name === "Chicken Breast"
+        ? [
+            group("Cooked", [
+              ["Grilled", 0],
+              ["Buttermilk fried", 0],
+            ]),
+          ]
+        : []),
+    ];
+    return;
+  }
+  if (name === "Whole Piri-piri Chicken") {
+    item.sideMode = "mixed";
+    item.addonGroups = [
+      chickenFlavour(),
+      { ...group("Second side", []), extras: mealSides() },
+    ];
+    return;
+  }
+  if (name === "Pork Ribs") {
+    item.sideMode = "mixed";
+    return;
+  }
+  if (name === "Loaded Nachos" || name === "Loaded Fries") {
+    item.addonGroups = [filling()];
+    return;
+  }
+  if (name === "Churro Largo") {
+    item.addonGroups = [
+      group("Sauce", [
+        ["Dulce de leche", 0],
+        ["Nutella", 0],
+      ]),
+    ];
+    return;
+  }
+  if (category === "Little Angels") item.addonGroups = [kidsDrink()];
+}
+
 export function buildFlyerMenu() {
   const categories = [];
   const menu = [];
   for (const [name, items] of SECTIONS) {
+    const meal = ["Burgers", "Burgers & Wraps", "Hotdogs", "Chicken", "Slow Cooked"].includes(
+      name,
+    );
     categories.push({
       id: id(),
       name,
       deleted: false,
-      sideMode: "none",
-      sides: [],
+      sideMode: ["Burgers", "Burgers & Wraps", "Hotdogs"].includes(name)
+        ? "mixed"
+        : "none",
+      sides: meal ? mealSides() : [],
     });
-    for (const [itemName, price] of items) menu.push(dish(itemName, price, name));
+    for (const [itemName, price] of items) {
+      const item = dish(itemName, price, name);
+      applyService(item);
+      menu.push(item);
+    }
   }
   return { categories, menu };
 }

@@ -948,3 +948,89 @@ test("the shared menu can replace the catalogue while an order is open", () => {
   assert.notEqual(before, 1);
   e.close();
 });
+test("a website order prints off the floor and a steak still needs a cook", () => {
+  const e = setup();
+  const dish = e.state.menu.find(
+    (m) =>
+      m.available &&
+      !m.deleted &&
+      !(m.cookOptions || []).some((c) => !c.deleted),
+  );
+  assert.ok(dish);
+  const id = randomUUID();
+  e.execute(
+    command("order.web", {
+      orderId: id,
+      customerName: "Jane",
+      phone: "07700900123",
+      fulfilment: "collection",
+      note: "No onion",
+      items: [{ menuId: dish.id, qty: 2, price: dish.price }],
+    }),
+  );
+  const order = e.state.orders.find((o) => o.id === id);
+  assert.equal(order.channel, "website");
+  assert.equal(order.tableId, "");
+  assert.equal(order.tableName, "Collection · Jane");
+  assert.equal(order.items[0].qty, 2);
+  assert.equal(order.items[0].sent, true);
+  assert.equal(order.items[0].price, dish.price);
+  assert.match(order.items[0].note, /No onion/);
+  assert.ok(
+    e.state.jobs.some((j) => j.orderId === id && j.status === "queued"),
+  );
+  assert.equal(
+    e.state.orders.filter((o) => o.tableId && o.status === "open").length,
+    0,
+  );
+  const steak = e.state.menu.find((m) =>
+    (m.cookOptions || []).some((c) => !c.deleted),
+  );
+  assert.ok(steak);
+  assert.throws(
+    () =>
+      e.execute(
+        command("order.web", {
+          customerName: "Jane",
+          items: [{ menuId: steak.id, qty: 1, price: steak.price }],
+        }),
+      ),
+    /cooked/,
+  );
+  const burger = e.state.menu.find((item) => item.name === "Simply the Best");
+  const burgerSides = e.state.categories.find(
+    (category) => category.name === "Burgers",
+  ).sides;
+  const fries = burgerSides.find((side) => side.price === 0);
+  assert.throws(
+    () =>
+      e.execute(
+        command("order.web", {
+          customerName: "Jane",
+          items: [{ menuId: burger.id, qty: 1, price: burger.price }],
+        }),
+      ),
+    /side/,
+  );
+  const webId = randomUUID();
+  e.execute(
+    command("order.web", {
+      orderId: webId,
+      customerName: "Jane",
+      items: [
+        {
+          menuId: burger.id,
+          qty: 1,
+          price: burger.price,
+          sideId: fries.id,
+          sideName: fries.name,
+          sidePrice: 0,
+        },
+      ],
+    }),
+  );
+  const meal = e.state.orders.find((order) => order.id === webId);
+  assert.equal(meal.items[0].choices.side.name, fries.name);
+  assert.equal(meal.items[0].choices.side.price, 0);
+  e.close();
+});
